@@ -1,0 +1,1 @@
+Placeholder so import.meta.glob has a valid directory. Room JSON files are written here by the in-browser builder (F4) via POST /api/save-room.

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "game_id": "",
+  "imports": [
+    {
+      "registry_key": "hollowcrow",
+      "library_asset_id": "2433f485-8451-4742-a82d-ca4bcd263fad",
+      "asset_type": "character",
+      "local_path": "assets/characters/hollowcrow",
+      "imported_at": "2026-04-13T00:22:54.194998+00:00"
+    },
+    {
+      "registry_key": "rivelet",
+      "library_asset_id": "5253ce56-f5a4-4adb-8db2-835ef1787dd4",
+      "asset_type": "character",
+      "local_path": "assets/characters/rivelet",
+      "imported_at": "2026-04-12T04:56:29.608190+00:00"
+    },
+    {
+      "registry_key": "grindscale",
+      "library_asset_id": "e79580ad-6906-4480-b077-481ab969f063",
+      "asset_type": "character",
+      "local_path": "assets/characters/grindscale",
+      "imported_at": "2026-04-12T04:56:30.612281+00:00"
+    },
+    {
+      "registry_key": "fernleap",
+      "library_asset_id": "1f52ae35-b6ec-4af6-82ab-0806b6e1a1da",
+      "asset_type": "creature",
+      "local_path": "assets/creatures/fernleap",
+      "imported_at": "2026-04-12T15:42:50.332753+00:00",
+      "notes": "Nature rabbit riftling"
+    },
+    {
+      "registry_key": "dark_pine_tree",
+      "library_asset_id": "193a3d89-4408-4fe1-9bf9-705942cd0231",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/dark-pine-tree",
+      "imported_at": "2026-04-12T20:09:36.468646+00:00"
+    },
+    {
+      "registry_key": "glowing_mushroom",
+      "library_asset_id": "62c3b262-482a-45f2-89c4-1bb176ff1b67",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/glowing-mushroom",
+      "imported_at": "2026-04-12T20:09:36.705173+00:00"
+    },
+    {
+      "registry_key": "corrupted_tree",
+      "library_asset_id": "e6d4100f-bc7e-478b-b669-f99527a2d00b",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/corrupted-tree",
+      "imported_at": "2026-04-12T20:09:36.967764+00:00"
+    },
+    {
+      "registry_key": "hollow_log",
+      "library_asset_id": "33e94c44-4f36-4608-81cf-137d5f009755",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/hollow-log",
+      "imported_at": "2026-04-12T20:09:37.231146+00:00"
+    },
+    {
+      "registry_key": "rift_corruption_node",
+      "library_asset_id": "0195eafb-af5d-4472-b428-bf3565e534e5",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/rift-corruption-node",
+      "imported_at": "2026-04-12T20:09:37.497550+00:00"
+    },
+    {
+      "registry_key": "stepping_stone",
+      "library_asset_id": "04a47aed-06ce-4435-81c0-476c8b72d5f1",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/stepping-stone",
+      "imported_at": "2026-04-12T20:09:37.748347+00:00"
+    },
+    {
+      "registry_key": "tall_grass_dark",
+      "library_asset_id": "9acffd19-47ff-4edf-a47c-6b2acf0389d5",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/tall-grass-dark",
+      "imported_at": "2026-04-12T20:09:37.991280+00:00"
+    },
+    {
+      "registry_key": "twisted_dark_tree",
+      "library_asset_id": "5b437473-d984-4a74-bb76-85a46c95cae9",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/twisted-dark-tree",
+      "imported_at": "2026-04-12T20:09:38.247851+00:00"
+    },
+    {
+      "registry_key": "tall_grass_wild",
+      "library_asset_id": "36a9b9d8-d39e-4934-9a29-6db275cd80d2",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/tall-grass-wild",
+      "imported_at": "2026-04-12T23:12:10.226218+00:00",
+      "notes": "Yellow-tipped wild grass tuft for plains biome scatter"
+    }
+  ]
+}

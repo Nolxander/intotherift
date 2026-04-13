@@ -1,0 +1,2873 @@
+import Phaser from 'phaser';
+import { PartyRiftling, Move, MoveKind, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, TYPE_COLORS } from '../data/party';
+import { TrinketInventory, getEquippedBuffs } from '../data/trinkets';
+import { SimpleNav, NavPoint, NAV_ARRIVAL_RADIUS, STUCK_WINDOW_MS, STUCK_THRESHOLD_PX } from '../data/nav';
+import { playWalkOrStatic, stopWalkAnim, directionFromVelocity, playAttackAnim, isPlayingAttackAnim } from '../data/anims';
+
+const HP_BAR_WIDTH = 20;
+const HP_BAR_HEIGHT = 3;
+const HP_BAR_OFFSET_Y = -16;
+
+/** Minimum distance between same-team units before separation force kicks in. */
+const SEPARATION_RADIUS = 24;
+/** Strength of the separation push (pixels/sec). */
+const SEPARATION_FORCE = 60;
+
+/**
+ * Difficulty scaling — tune these to adjust combat feel.
+ * Wild riftlings use their template stats multiplied by these factors.
+ */
+const WILD_HP_MULT = 1.2;
+const WILD_ATK_MULT = 0.3;
+const WILD_SPEED_MULT = 0.7;
+
+/** Multiplier to convert move.cooldown value to milliseconds. */
+const MOVE_CD_SCALE = 200;
+
+/** Speed allies walk to formation positions during setup phase. */
+const SETUP_WALK_SPEED = 100;
+/** Distance threshold (px) to consider an ally "in position". */
+const SETUP_ARRIVE_DIST = 6;
+/** Max time (ms) for the setup phase before forcing combat start. */
+const SETUP_TIMEOUT_MS = 2500;
+
+export interface StatusEffect {
+  id: string;
+  stat: 'defense' | 'attack' | 'speed' | 'evasion';
+  amount: number;
+  expiresAt: number;
+  /** Damage reflected to the attacker each time this unit is struck (Lava Shield thorns). */
+  thornsAmount?: number;
+}
+
+export interface MoveSlot {
+  name: string;
+  power: number;
+  cooldownMs: number;
+  lastUsedTime: number;
+  isSignature: boolean;
+  kind: MoveKind;
+  radius?: number;
+  duration?: number;
+  hits?: number;
+  drainRatio?: number;
+  appliesIgnite?: number;
+  bonusPerIgnite?: number;
+  repositions?: boolean;
+  selfTarget?: boolean;
+  thornsAmount?: number;
+  appliesBlind?: number;
+  blindDuration?: number;
+  refracts?: boolean;
+  selfBuffStat?: 'defense' | 'attack' | 'speed' | 'evasion';
+  selfBuffAmount?: number;
+  selfBuffDuration?: number;
+  appliesStatDebuff?: 'defense' | 'attack' | 'speed' | 'evasion';
+  debuffAmount?: number;
+  debuffDuration?: number;
+  dashThrough?: boolean;
+  pullsTarget?: boolean;
+  selfHealFallback?: boolean;
+  appliesBriar?: number;
+  briarDuration?: number;
+  rootTarget?: boolean;
+  stunsRadius?: boolean;
+  stunDuration?: number;
+  grantsKnockbackImmunity?: boolean;
+  defenseScaledBonus?: number;
+  grantsDamageReduction?: number;
+  damageReductionDuration?: number;
+  appliesHuntersMark?: boolean;
+  markBonus?: number;
+  markDuration?: number;
+  executeBonusPct?: number;
+  shadowStep?: boolean;
+  appliesSlowOnLand?: boolean;
+  phasesBeforeStrike?: boolean;
+  appliesSlowToAllHit?: boolean;
+  /** Animation key slug to play on the attacker when this move fires (e.g. 'strike', 'leap'). */
+  attackAnim?: string;
+}
+
+export interface CombatUnit {
+  sprite: Phaser.Physics.Arcade.Sprite;
+  hpBar: Phaser.GameObjects.Graphics;
+  hp: number;
+  maxHp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  attackCooldown: number;
+  lastAttackTime: number;
+  texturePrefix: string;
+  riftlingKey: string;
+  scale: number;
+  alive: boolean;
+  /** Equipped move slots with per-move cooldown tracking (allies only). */
+  moveSlots?: MoveSlot[];
+  /** Index into moveSlots for the move last used (-1 = none yet). */
+  lastMoveIndex: number;
+  /** Name of the riftling (for HUD display). */
+  displayName: string;
+  /** Element type (for HUD display). */
+  elementType: string;
+  /** Engagement distance in pixels. */
+  attackRange: number;
+  /** Critical hit chance (0–100). */
+  critRate: number;
+  /** Evasion chance (0–100). */
+  evasion: number;
+  /** Active status effects (buffs/debuffs). */
+  statusEffects: StatusEffect[];
+  /** Ignite stacks — ticks for stacks damage every 500 ms, decays 1 stack per tick. */
+  igniteStacks: number;
+  /** Timestamp when the next ignite damage tick fires. */
+  nextIgniteTick: number;
+  /** Blind miss chance (0–100) — attacker rolls this before hitting; non-zero = blinded. */
+  blindMissChance: number;
+  /** Timestamp when the blind expires. */
+  blindExpiresAt: number;
+  /** Briar debuff — damage taken each time this unit attacks. */
+  briarDamage: number;
+  /** Timestamp when the briar debuff expires. */
+  briarExpiresAt: number;
+  /** Timestamp until which this unit cannot be knocked back (Stone Bash). */
+  knockbackImmuneUntil: number;
+  /** Timestamp until which this unit is phased — immune to damage and invisible to new attacks. */
+  phaseUntil: number;
+  /** Fraction of incoming damage blocked while active (Iron Curl). */
+  damageReductionAmount: number;
+  /** Timestamp when the damage reduction expires. */
+  damageReductionUntil: number;
+  /** Damage amplification applied to all hits on this unit while marked. */
+  markedDamageBonus: number;
+  /** Timestamp when Hunter's Mark expires. */
+  markedUntil: number;
+  /** Forced target from taunt — overrides normal targeting. */
+  forcedTarget?: CombatUnit;
+  /** Timestamp when forced target expires. */
+  forcedTargetExpiry?: number;
+}
+
+export interface DefeatedRiftling {
+  riftlingKey: string;
+  texturePrefix: string;
+  name: string;
+}
+
+export interface CompanionEntry {
+  data: PartyRiftling;
+  sprite: Phaser.Physics.Arcade.Sprite;
+}
+
+export class CombatManager {
+  private scene: Phaser.Scene;
+  private enemies: CombatUnit[] = [];
+  private allies: CombatUnit[] = [];
+  private walls: Phaser.Physics.Arcade.StaticGroup;
+  private active = false;
+  private onRoomCleared?: (defeated: DefeatedRiftling[]) => void;
+  private defeated: DefeatedRiftling[] = [];
+  private _selectedAllyIndex = 0;
+  private _xpEarned = 0;
+  private regenTimer?: Phaser.Time.TimerEvent;
+
+  /** Pre-combat positioning phase state. */
+  private setupPhase = false;
+  private setupStartTime = 0;
+  private formationTargets: { x: number; y: number }[] = [];
+  private enemyFormationTargets: { x: number; y: number }[] = [];
+
+  // --- Player command state ---
+
+  /** Focus target — all allies prioritize this enemy. */
+  private _focusTarget: CombatUnit | null = null;
+  private focusRing?: Phaser.GameObjects.Graphics;
+
+  /** Rally — allies sprint to trainer and hold. */
+  private _rallyActive = false;
+  private _rallyEndTime = 0;
+  private static readonly RALLY_DURATION = 2000;
+  private static readonly RALLY_SPEED_MULT = 1.5;
+
+  /** Per-ally reposition waypoints. */
+  private repositionTargets = new Map<CombatUnit, { x: number; y: number; resumeTime: number }>();
+  private repositionMarkers = new Map<CombatUnit, Phaser.GameObjects.Graphics>();
+  private static readonly REPOSITION_HOLD = 3000;
+
+  /** Unleash — team-wide signature burst. */
+  private _unleashCooldown = 0;
+  private _unleashReadyTime = 0;
+  private static readonly UNLEASH_COOLDOWN = 20000;
+
+  // --- Navigation ---
+  private nav: SimpleNav | null = null;
+  /** Last facing direction per unit — needed to set correct idle texture on stop. */
+  private unitLastDir = new Map<CombatUnit, string>();
+  /** Per-unit waypoint lists for pathfinding. */
+  private unitWaypoints = new Map<CombatUnit, NavPoint[]>();
+  /** The goal pos when the path was last calculated (for stale-check). */
+  private unitNavGoal = new Map<CombatUnit, NavPoint>();
+  /** Last sampled position for stuck-detection. */
+  private unitLastPos = new Map<CombatUnit, NavPoint>();
+  private unitLastPosTime = new Map<CombatUnit, number>();
+
+  constructor(scene: Phaser.Scene, walls: Phaser.Physics.Arcade.StaticGroup) {
+    this.scene = scene;
+    this.walls = walls;
+  }
+
+  /**
+   * Start a combat encounter with all active party members.
+   */
+  startEncounter(
+    spawns: { x: number; y: number }[],
+    companions: CompanionEntry[],
+    onCleared: (defeated: DefeatedRiftling[]) => void,
+    difficulty = 1,
+    roomPixelW = 480,
+    roomPixelH = 320,
+    entrySide: 'north' | 'south' | 'east' | 'west' = 'south',
+    trinkets?: TrinketInventory,
+    nav?: SimpleNav,
+  ): void {
+    this.active = true;
+    this.onRoomCleared = onCleared;
+    this.enemies = [];
+    this.allies = [];
+    this.defeated = [];
+    this._selectedAllyIndex = 0;
+    this._xpEarned = 0;
+    this.nav = nav ?? null;
+    this.unitWaypoints.clear();
+    this.unitNavGoal.clear();
+    this.unitLastPos.clear();
+    this.unitLastPosTime.clear();
+    this.unitLastDir.clear();
+
+    // Enter setup phase — allies walk to formation, enemies idle
+    this.setupPhase = true;
+    this.setupStartTime = this.scene.time.now;
+
+    // Register all companions as combat allies
+    for (const c of companions) {
+      const moveSlots: MoveSlot[] = c.data.equipped
+        .map((idx) => c.data.moves[idx])
+        .filter(Boolean)
+        .map((m) => ({
+          name: m.name,
+          power: m.power,
+          cooldownMs: m.cooldown * MOVE_CD_SCALE,
+          lastUsedTime: -Infinity,
+          isSignature: m.isSignature,
+          kind: m.kind,
+          radius: m.radius,
+          duration: m.duration,
+          hits: m.hits,
+          drainRatio: m.drainRatio,
+          appliesIgnite: m.appliesIgnite,
+          bonusPerIgnite: m.bonusPerIgnite,
+          repositions: m.repositions,
+          selfTarget: m.selfTarget,
+          thornsAmount: m.thornsAmount,
+          appliesBlind: m.appliesBlind,
+          blindDuration: m.blindDuration,
+          refracts: m.refracts,
+          selfBuffStat: m.selfBuffStat,
+          selfBuffAmount: m.selfBuffAmount,
+          selfBuffDuration: m.selfBuffDuration,
+          appliesStatDebuff: m.appliesStatDebuff,
+          debuffAmount: m.debuffAmount,
+          debuffDuration: m.debuffDuration,
+          dashThrough: m.dashThrough,
+          pullsTarget: m.pullsTarget,
+          selfHealFallback: m.selfHealFallback,
+          appliesBriar: m.appliesBriar,
+          briarDuration: m.briarDuration,
+          rootTarget: m.rootTarget,
+          stunsRadius: m.stunsRadius,
+          stunDuration: m.stunDuration,
+          grantsKnockbackImmunity: m.grantsKnockbackImmunity,
+          defenseScaledBonus: m.defenseScaledBonus,
+          grantsDamageReduction: m.grantsDamageReduction,
+          damageReductionDuration: m.damageReductionDuration,
+          appliesHuntersMark: m.appliesHuntersMark,
+          markBonus: m.markBonus,
+          markDuration: m.markDuration,
+          executeBonusPct: m.executeBonusPct,
+          shadowStep: m.shadowStep,
+          appliesSlowOnLand: m.appliesSlowOnLand,
+          phasesBeforeStrike: m.phasesBeforeStrike,
+          appliesSlowToAllHit: m.appliesSlowToAllHit,
+        }));
+
+      this.allies.push({
+        sprite: c.sprite,
+        hpBar: this.scene.add.graphics().setDepth(200),
+        hp: c.data.hp,
+        maxHp: c.data.maxHp,
+        attack: c.data.attack,
+        defense: c.data.defense,
+        speed: c.data.speed,
+        attackCooldown: c.data.attackSpeed,
+        lastAttackTime: 0,
+        texturePrefix: c.data.texturePrefix,
+        riftlingKey: c.data.texturePrefix,
+        scale: c.sprite.scale,
+        alive: true,
+        moveSlots,
+        lastMoveIndex: -1,
+        displayName: c.data.name,
+        elementType: c.data.elementType,
+        attackRange: c.data.attackRange,
+        critRate: c.data.critRate,
+        evasion: c.data.evasion,
+        statusEffects: [],
+        igniteStacks: 0,
+        nextIgniteTick: 0,
+        blindMissChance: 0,
+        blindExpiresAt: 0,
+        briarDamage: 0,
+        briarExpiresAt: 0,
+        knockbackImmuneUntil: 0,
+        phaseUntil: 0,
+        damageReductionAmount: 0,
+        damageReductionUntil: 0,
+        markedDamageBonus: 0,
+        markedUntil: 0,
+      });
+    }
+
+    // Apply type synergy buffs to matching allies
+    const synergies = getActiveSynergies(companions.map((c) => c.data));
+    for (const { synergy } of synergies) {
+      for (const ally of this.allies) {
+        if (ally.elementType !== synergy.type) continue;
+        if (synergy.buffs.attack) ally.attack += synergy.buffs.attack;
+        if (synergy.buffs.defense) ally.defense += synergy.buffs.defense;
+        if (synergy.buffs.critRate) ally.critRate += synergy.buffs.critRate;
+        if (synergy.buffs.evasion) ally.evasion += synergy.buffs.evasion;
+        if (synergy.buffs.hp) {
+          ally.maxHp += synergy.buffs.hp;
+          ally.hp += synergy.buffs.hp;
+        }
+      }
+
+      // Nature regen: heal matching allies 2 HP/s during combat
+      if (synergy.special === 'regen') {
+        this.regenTimer = this.scene.time.addEvent({
+          delay: 1000,
+          loop: true,
+          callback: () => {
+            if (!this.active) return;
+            for (const ally of this.allies) {
+              if (ally.alive && ally.elementType === 'nature') {
+                ally.hp = Math.min(ally.maxHp, ally.hp + 2);
+              }
+            }
+          },
+        });
+      }
+    }
+
+    // Apply equipped trinket stat buffs to all allies
+    if (trinkets) {
+      const tBuffs = getEquippedBuffs(trinkets);
+      for (const ally of this.allies) {
+        if (tBuffs.attack) ally.attack += tBuffs.attack;
+        if (tBuffs.defense) ally.defense += tBuffs.defense;
+        if (tBuffs.speed) ally.speed += tBuffs.speed;
+        if (tBuffs.critRate) ally.critRate += tBuffs.critRate;
+        if (tBuffs.evasion) ally.evasion += tBuffs.evasion;
+        if (tBuffs.hp) {
+          ally.maxHp += tBuffs.hp;
+          ally.hp += tBuffs.hp;
+        }
+      }
+    }
+
+    // Compute ally positions — spread out slightly near entry side
+    this.formationTargets = this.computeAllyFormation(companions, roomPixelW, roomPixelH, entrySide);
+
+    // Compute scatter positions on the enemy half, then spawn enemies directly there
+    const scatterPositions = this.computeEnemyScatter(spawns.length, roomPixelW, roomPixelH, entrySide);
+
+    // Derive enemy level from difficulty so deeper rooms spawn higher-level riftlings.
+    // difficulty = (1 + roomsCleared * 0.6) * roomTypeBonus, so rounding gives a
+    // natural 1→MAX_LEVEL ramp across a full run.
+    const enemyLevel = Math.max(1, Math.min(MAX_LEVEL, Math.round(difficulty)));
+
+    for (let si = 0; si < spawns.length; si++) {
+      const pos = scatterPositions[si];
+      const riftlingKey = Phaser.Utils.Array.GetRandom(AVAILABLE_RIFTLINGS);
+
+      // Build stats from level-1 base (randomized per species ranges) grown to enemyLevel
+      // via the same level-up logic player riftlings use — no separate scaling formula.
+      const riftling = createRiftlingAtLevel(riftlingKey, enemyLevel);
+
+      const sprite = this.scene.physics.add.sprite(pos.x, pos.y, `${riftling.texturePrefix}_south`);
+
+      const enemyScale = 0.7;
+      sprite.setScale(enemyScale);
+      sprite.setDepth(10 + pos.y / 10);
+      sprite.setCollideWorldBounds(true);
+      sprite.body!.setSize(20, 20);
+      this.scene.physics.add.collider(sprite, this.walls);
+
+      const maxHp = Math.floor(riftling.maxHp * WILD_HP_MULT);
+      const enemy: CombatUnit = {
+        sprite,
+        hpBar: this.scene.add.graphics().setDepth(200),
+        hp: maxHp,
+        maxHp,
+        attack: Math.floor(riftling.attack * WILD_ATK_MULT),
+        defense: Math.floor(riftling.defense * WILD_ATK_MULT),
+        speed: Math.floor(riftling.speed * WILD_SPEED_MULT),
+        attackCooldown: Math.max(400, riftling.attackSpeed),
+        lastAttackTime: 0,
+        texturePrefix: riftling.texturePrefix,
+        riftlingKey,
+        scale: enemyScale,
+        alive: true,
+        lastMoveIndex: -1,
+        displayName: riftling.name,
+        elementType: riftling.elementType,
+        attackRange: riftling.attackRange,
+        critRate: Math.floor(riftling.critRate * 0.5),
+        evasion: Math.floor(riftling.evasion * 0.3),
+        statusEffects: [],
+        igniteStacks: 0,
+        nextIgniteTick: 0,
+        blindMissChance: 0,
+        blindExpiresAt: 0,
+        briarDamage: 0,
+        briarExpiresAt: 0,
+        knockbackImmuneUntil: 0,
+        phaseUntil: 0,
+        damageReductionAmount: 0,
+        damageReductionUntil: 0,
+        markedDamageBonus: 0,
+        markedUntil: 0,
+      };
+      this.enemies.push(enemy);
+    }
+
+    // Enemies are already at their positions — no walking needed
+    this.enemyFormationTargets = scatterPositions;
+  }
+
+  get isActive(): boolean {
+    return this.active;
+  }
+
+  /** Return HP values for all allies so the scene can sync back to party data. */
+  getAllyHps(): number[] {
+    return this.allies.map((a) => a.hp);
+  }
+
+  /** Total XP earned from enemy kills in this encounter. */
+  get xpEarned(): number {
+    return this._xpEarned;
+  }
+
+  /** True while allies are walking to formation before combat starts. */
+  get isSetupPhase(): boolean {
+    return this.setupPhase;
+  }
+
+  update(time: number, trainerSprite: Phaser.Physics.Arcade.Sprite): void {
+    if (!this.active || this.allies.length === 0) return;
+
+    // Y-axis depth sort — lower on screen renders in front
+    for (const ally of this.allies) {
+      if (ally.alive) ally.sprite.setDepth(10 + ally.sprite.y / 10);
+    }
+    for (const enemy of this.enemies) {
+      if (enemy.alive) enemy.sprite.setDepth(10 + enemy.sprite.y / 10);
+    }
+
+    // --- Setup phase: allies walk to formation, enemies idle ---
+    if (this.setupPhase) {
+      this.updateSetupPhase(time);
+      // Draw HP bars for both sides during setup (enemies visible but idle)
+      for (const enemy of this.enemies) if (enemy.alive) this.drawHpBar(enemy, false);
+      for (const ally of this.allies) if (ally.alive) this.drawHpBar(ally, true);
+      return;
+    }
+
+    // Tick status effects (expire buffs/debuffs) and DoT effects
+    this.tickStatusEffects(time);
+    this.tickIgnite(time);
+    this.tickBlind(time);
+    this.tickBriarExpiry(time);
+    this.tickHuntersMark(time);
+
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) continue;
+      this.updateEnemyAI(enemy, time);
+      this.drawHpBar(enemy, false);
+    }
+
+    for (const ally of this.allies) {
+      if (ally.alive) {
+        this.updateCompanionAI(ally, time, trainerSprite);
+        this.drawHpBar(ally, true);
+      }
+    }
+
+    // Draw command visuals
+    this.drawFocusRing();
+    this.drawRepositionMarkers();
+
+    this.checkCombatEnd();
+  }
+
+  /**
+   * Steer `unit` toward (goalX, goalY) at `speed`, using nav pathfinding when
+   * available. Returns the normalised direction vector that was applied so the
+   * caller can update the sprite texture.
+   */
+  private moveUnitToward(
+    unit: CombatUnit,
+    goalX: number,
+    goalY: number,
+    speed: number,
+    time: number,
+  ): { nx: number; ny: number } {
+    const dx = goalX - unit.sprite.x;
+    const dy = goalY - unit.sprite.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 1) return { nx: 0, ny: 0 };
+
+    if (!this.nav) {
+      // No nav — direct movement
+      unit.sprite.setVelocity((dx / dist) * speed, (dy / dist) * speed);
+      return { nx: dx / dist, ny: dy / dist };
+    }
+
+    // --- Stuck detection ---
+    const lastPosTime = this.unitLastPosTime.get(unit) ?? 0;
+    let isStuck = false;
+    if (lastPosTime === 0) {
+      this.unitLastPos.set(unit, { x: unit.sprite.x, y: unit.sprite.y });
+      this.unitLastPosTime.set(unit, time);
+    } else if (time - lastPosTime > STUCK_WINDOW_MS) {
+      const lp = this.unitLastPos.get(unit)!;
+      const ddx = unit.sprite.x - lp.x;
+      const ddy = unit.sprite.y - lp.y;
+      isStuck = (ddx * ddx + ddy * ddy) < STUCK_THRESHOLD_PX * STUCK_THRESHOLD_PX && dist > 16;
+      this.unitLastPos.set(unit, { x: unit.sprite.x, y: unit.sprite.y });
+      this.unitLastPosTime.set(unit, time);
+    }
+
+    // --- Path recalculation ---
+    const waypoints = this.unitWaypoints.get(unit) ?? [];
+    if (isStuck || SimpleNav.isPathStale(waypoints, this.unitNavGoal.get(unit) ?? null, goalX, goalY)) {
+      const newPath = this.nav.findPath(unit.sprite.x, unit.sprite.y, goalX, goalY);
+      this.unitWaypoints.set(unit, newPath);
+      this.unitNavGoal.set(unit, { x: goalX, y: goalY });
+    }
+
+    // --- Advance past arrived waypoints ---
+    const wps = this.unitWaypoints.get(unit)!;
+    while (wps.length > 0) {
+      const wp = wps[0];
+      const wdx = wp.x - unit.sprite.x;
+      const wdy = wp.y - unit.sprite.y;
+      if (wdx * wdx + wdy * wdy <= NAV_ARRIVAL_RADIUS * NAV_ARRIVAL_RADIUS) {
+        wps.shift();
+      } else {
+        break;
+      }
+    }
+
+    // --- Steer toward next waypoint or direct goal ---
+    const nextX = wps.length > 0 ? wps[0].x : goalX;
+    const nextY = wps.length > 0 ? wps[0].y : goalY;
+    const ndx = nextX - unit.sprite.x;
+    const ndy = nextY - unit.sprite.y;
+    const ndist = Math.sqrt(ndx * ndx + ndy * ndy);
+    const nx = ndx / ndist;
+    const ny = ndy / ndist;
+    unit.sprite.setVelocity(nx * speed, ny * speed);
+    return { nx, ny };
+  }
+
+  private updateEnemyAI(enemy: CombatUnit, time: number): void {
+    // Respect taunt forced target
+    let target: CombatUnit | null = null;
+    if (enemy.forcedTarget && enemy.forcedTarget.alive &&
+        enemy.forcedTargetExpiry !== undefined && time < enemy.forcedTargetExpiry) {
+      target = enemy.forcedTarget;
+    } else {
+      enemy.forcedTarget = undefined;
+      enemy.forcedTargetExpiry = undefined;
+      // Find the nearest alive ally to target
+      let bestDist = Infinity;
+      for (const ally of this.allies) {
+        if (!ally.alive) continue;
+        const adx = ally.sprite.x - enemy.sprite.x;
+        const ady = ally.sprite.y - enemy.sprite.y;
+        const d = Math.sqrt(adx * adx + ady * ady);
+        if (d < bestDist) {
+          bestDist = d;
+          target = ally;
+        }
+      }
+    }
+    if (!target) return;
+
+    const dx = target.sprite.x - enemy.sprite.x;
+    const dy = target.sprite.y - enemy.sprite.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    const sep = this.getSeparation(enemy, this.enemies);
+
+    if (dist > enemy.attackRange) {
+      const { nx, ny } = this.moveUnitToward(enemy, target.sprite.x, target.sprite.y, enemy.speed, time);
+      // Blend separation into the nav velocity
+      const body = enemy.sprite.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(body.velocity.x + sep.vx, body.velocity.y + sep.vy);
+      const vx = nx + sep.vx;
+      const vy = ny + sep.vy;
+      const dir = this.getDirection(vx !== 0 ? vx : nx, vy !== 0 ? vy : ny);
+      this.unitLastDir.set(enemy, dir);
+      playWalkOrStatic(enemy.sprite, enemy.texturePrefix, dir, this.scene.anims);
+    } else {
+      // In attack range — face the target, stop walk anim, apply only separation drift
+      const faceDir = this.getDirection(dx, dy);
+      this.unitLastDir.set(enemy, faceDir);
+      if (!isPlayingAttackAnim(enemy.sprite, enemy.texturePrefix)) {
+        stopWalkAnim(enemy.sprite, enemy.texturePrefix, faceDir);
+      }
+      enemy.sprite.setVelocity(sep.vx, sep.vy);
+      if (time - enemy.lastAttackTime > enemy.attackCooldown) {
+        enemy.lastAttackTime = time;
+        this.dealDamage(enemy, target);
+      }
+    }
+  }
+
+  private updateCompanionAI(comp: CombatUnit, time: number, trainerSprite?: Phaser.Physics.Arcade.Sprite): void {
+    // --- Rally override: sprint to trainer ---
+    if (this._rallyActive && trainerSprite) {
+      if (time >= this._rallyEndTime) {
+        this._rallyActive = false;
+      } else {
+        const dx = trainerSprite.x - comp.sprite.x;
+        const dy = trainerSprite.y - comp.sprite.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 20) {
+          const spd = comp.speed * CombatManager.RALLY_SPEED_MULT;
+          const { nx, ny } = this.moveUnitToward(comp, trainerSprite.x, trainerSprite.y, spd, time);
+          const dir = this.getDirection(nx, ny);
+          this.unitLastDir.set(comp, dir);
+          playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+        } else {
+          const idleDir = this.unitLastDir.get(comp) ?? 'south';
+          stopWalkAnim(comp.sprite, comp.texturePrefix, idleDir);
+          comp.sprite.setVelocity(0, 0);
+        }
+        return;
+      }
+    }
+
+    // --- Reposition override: walk to waypoint, hold, then resume ---
+    const repo = this.repositionTargets.get(comp);
+    if (repo) {
+      const dx = repo.x - comp.sprite.x;
+      const dy = repo.y - comp.sprite.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 8) {
+        // Walk to target via nav
+        const { nx, ny } = this.moveUnitToward(comp, repo.x, repo.y, comp.speed, time);
+        const dir = this.getDirection(nx, ny);
+        this.unitLastDir.set(comp, dir);
+        playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+        return;
+      }
+      // At target — stop walk anim
+      stopWalkAnim(comp.sprite, comp.texturePrefix, this.unitLastDir.get(comp) ?? 'south');
+      // At target — hold until resume time, but still attack enemies in range
+      comp.sprite.setVelocity(0, 0);
+      if (time < repo.resumeTime) {
+        // Attack enemies in range while holding position
+        this.tryAttackNearestEnemy(comp, time);
+        return;
+      }
+      // Hold expired — resume normal AI
+      this.repositionTargets.delete(comp);
+      const marker = this.repositionMarkers.get(comp);
+      if (marker) { marker.destroy(); this.repositionMarkers.delete(comp); }
+    }
+
+    // --- Normal AI with focus target priority ---
+    let target: CombatUnit | null = null;
+    let targetDist = Infinity;
+
+    // Prioritize focus target if alive
+    if (this._focusTarget?.alive) {
+      const fx = this._focusTarget.sprite.x - comp.sprite.x;
+      const fy = this._focusTarget.sprite.y - comp.sprite.y;
+      targetDist = Math.sqrt(fx * fx + fy * fy);
+      target = this._focusTarget;
+    } else {
+      // Find nearest enemy
+      for (const enemy of this.enemies) {
+        if (!enemy.alive) continue;
+        const dx = enemy.sprite.x - comp.sprite.x;
+        const dy = enemy.sprite.y - comp.sprite.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < targetDist) {
+          targetDist = dist;
+          target = enemy;
+        }
+      }
+    }
+
+    if (!target) {
+      comp.sprite.setVelocity(0, 0);
+      return;
+    }
+
+    const sep = this.getSeparation(comp, this.allies);
+
+    if (targetDist > comp.attackRange) {
+      const { nx, ny } = this.moveUnitToward(comp, target.sprite.x, target.sprite.y, comp.speed, time);
+      // Blend separation into the nav velocity
+      const body = comp.sprite.body as Phaser.Physics.Arcade.Body;
+      body.setVelocity(body.velocity.x + sep.vx, body.velocity.y + sep.vy);
+      const vx = nx + sep.vx;
+      const vy = ny + sep.vy;
+      const dir = this.getDirection(vx !== 0 ? vx : nx, vy !== 0 ? vy : ny);
+      this.unitLastDir.set(comp, dir);
+      playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+    } else {
+      // In attack range — face the target, stop walk anim, apply only separation drift
+      const tdx = target.sprite.x - comp.sprite.x;
+      const tdy = target.sprite.y - comp.sprite.y;
+      const faceDir = this.getDirection(tdx, tdy);
+      this.unitLastDir.set(comp, faceDir);
+      if (!isPlayingAttackAnim(comp.sprite, comp.texturePrefix)) {
+        stopWalkAnim(comp.sprite, comp.texturePrefix, faceDir);
+      }
+      comp.sprite.setVelocity(sep.vx, sep.vy);
+      // Use equipped moves if available, otherwise fall back to base attack
+      if (comp.moveSlots && comp.moveSlots.length > 0) {
+        this.tryUseMove(comp, target, time);
+      } else if (time - comp.lastAttackTime > comp.attackCooldown) {
+        comp.lastAttackTime = time;
+        this.dealDamage(comp, target);
+      }
+    }
+  }
+
+  /** Attack nearest enemy in range without moving (used during reposition hold). */
+  private tryAttackNearestEnemy(comp: CombatUnit, time: number): void {
+    let nearest: CombatUnit | null = null;
+    let nearestDist = Infinity;
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) continue;
+      const dx = enemy.sprite.x - comp.sprite.x;
+      const dy = enemy.sprite.y - comp.sprite.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < nearestDist) { nearestDist = dist; nearest = enemy; }
+    }
+    if (!nearest || nearestDist > comp.attackRange * 1.5) return;
+    const ndx = nearest.sprite.x - comp.sprite.x;
+    const ndy = nearest.sprite.y - comp.sprite.y;
+    const faceDir = this.getDirection(ndx, ndy);
+    this.unitLastDir.set(comp, faceDir);
+    if (!isPlayingAttackAnim(comp.sprite, comp.texturePrefix)) {
+      stopWalkAnim(comp.sprite, comp.texturePrefix, faceDir);
+    }
+    if (comp.moveSlots && comp.moveSlots.length > 0) {
+      this.tryUseMove(comp, nearest, time);
+    } else if (time - comp.lastAttackTime > comp.attackCooldown) {
+      comp.lastAttackTime = time;
+      this.dealDamage(comp, nearest);
+    }
+  }
+
+  /** Pick the first equipped move off cooldown with a valid target and use it. */
+  private tryUseMove(unit: CombatUnit, nearestEnemy: CombatUnit, time: number): void {
+    const slots = unit.moveSlots!;
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      if (time - slot.lastUsedTime < slot.cooldownMs) continue;
+
+      // Resolve target based on move kind
+      const target = this.pickMoveTarget(unit, slot, nearestEnemy, time);
+      if (!target) continue; // No valid target for this move — try next slot
+
+      slot.lastUsedTime = time;
+      unit.lastMoveIndex = i;
+      this.dealMoveDamage(unit, target, slot);
+      return;
+    }
+    // All moves on cooldown or no valid targets — do nothing
+  }
+
+  /**
+   * Pick the appropriate target for a move based on its kind.
+   * Returns null if the move shouldn't be used right now (e.g., heal when nobody is hurt).
+   */
+  private pickMoveTarget(unit: CombatUnit, slot: MoveSlot, nearestEnemy: CombatUnit, _time: number): CombatUnit | null {
+    if (slot.selfTarget) return unit;
+
+    switch (slot.kind) {
+      case 'heal': {
+        // Find lowest-HP ally below 60%
+        let lowestAlly: CombatUnit | null = null;
+        let lowestRatio = 0.6;
+        for (const ally of this.allies) {
+          if (!ally.alive) continue;
+          const ratio = ally.hp / ally.maxHp;
+          if (ratio < lowestRatio) {
+            lowestRatio = ratio;
+            lowestAlly = ally;
+          }
+        }
+        // Fallback: heal self if nobody else needs it (Sap Leech)
+        if (!lowestAlly && slot.selfHealFallback) return unit;
+        return lowestAlly;
+      }
+      case 'shield': {
+        // Target self or lowest-HP ally, skip if target already has shield
+        let target: CombatUnit = unit;
+        let lowestHp = unit.hp;
+        for (const ally of this.allies) {
+          if (!ally.alive) continue;
+          if (ally.hp < lowestHp && !ally.statusEffects.some((e) => e.id === 'shield')) {
+            lowestHp = ally.hp;
+            target = ally;
+          }
+        }
+        // Skip if target already has a shield
+        if (target.statusEffects.some((e) => e.id === 'shield')) return null;
+        return target;
+      }
+      case 'rally_buff': {
+        // Check if any nearby ally lacks the buff
+        let hasUnbuffedAlly = false;
+        for (const ally of this.allies) {
+          if (!ally.alive) continue;
+          const dx = ally.sprite.x - unit.sprite.x;
+          const dy = ally.sprite.y - unit.sprite.y;
+          if (Math.sqrt(dx * dx + dy * dy) > 60) continue;
+          if (!ally.statusEffects.some((e) => e.id === 'rally_atk')) {
+            hasUnbuffedAlly = true;
+            break;
+          }
+        }
+        return hasUnbuffedAlly ? unit : null; // target is self (rally buffs from caster)
+      }
+      case 'leap': {
+        // Hunter targeting: pick the enemy with the highest attackRange above the
+        // backline threshold. This is a stable proxy for "ranged/backline unit" and
+        // prevents hunters from looping back to frontline melee units after landing.
+        const BACKLINE_RANGE_THRESHOLD = 60;
+        const leapEnemies = this.allies.includes(unit) ? this.enemies : this.allies;
+        let leapTarget: CombatUnit | null = null;
+        let bestRange = BACKLINE_RANGE_THRESHOLD;
+        for (const e of leapEnemies) {
+          if (!e.alive) continue;
+          if (e.attackRange > bestRange) { bestRange = e.attackRange; leapTarget = e; }
+        }
+        return leapTarget;
+      }
+      case 'spin': {
+        // Fire when at least one enemy is within the spin radius
+        const spinRadius = slot.radius ?? 50;
+        const spinEnemies = this.allies.includes(unit) ? this.enemies : this.allies;
+        for (const e of spinEnemies) {
+          if (!e.alive) continue;
+          if (Phaser.Math.Distance.Between(unit.sprite.x, unit.sprite.y, e.sprite.x, e.sprite.y) <= spinRadius) {
+            return unit; // target self — executeSpin handles its own geometry
+          }
+        }
+        return null;
+      }
+      case 'taunt': {
+        // Check if 2+ enemies are nearby without forced target on this unit
+        let nearbyCount = 0;
+        for (const enemy of this.enemies) {
+          if (!enemy.alive) continue;
+          const dx = enemy.sprite.x - unit.sprite.x;
+          const dy = enemy.sprite.y - unit.sprite.y;
+          if (Math.sqrt(dx * dx + dy * dy) <= 50 && enemy.forcedTarget !== unit) {
+            nearbyCount++;
+          }
+        }
+        return nearbyCount >= 2 ? unit : null; // target is self (taunt radiates from caster)
+      }
+      default:
+        // All damage kinds target nearest enemy
+        return nearestEnemy;
+    }
+  }
+
+  private dealDamage(attacker: CombatUnit, defender: CombatUnit): void {
+    const variance = Math.floor(Math.random() * 4) - 2;
+    const damage = Math.max(1, attacker.attack + variance);
+    const isAllyAttacker = this.allies.includes(attacker);
+    const label = `-${damage}`;
+
+    const adx = defender.sprite.x - attacker.sprite.x;
+    const ady = defender.sprite.y - attacker.sprite.y;
+    const aDist = Math.sqrt(adx * adx + ady * ady);
+
+    // Ranged attacks: fire a projectile, apply damage on arrival
+    if (aDist > 40) {
+      const projColor = isAllyAttacker ? (TYPE_COLORS[attacker.elementType] ?? 0xffcc44) : 0xff4444;
+      const proj = this.scene.add.circle(attacker.sprite.x, attacker.sprite.y, 3, projColor).setDepth(250);
+      this.scene.tweens.add({
+        targets: proj,
+        x: defender.sprite.x,
+        y: defender.sprite.y,
+        duration: Math.min(200, aDist * 2),
+        onComplete: () => {
+          proj.destroy();
+          this.applyHit(attacker, defender, damage, isAllyAttacker, label);
+        },
+      });
+      return;
+    }
+
+    // Melee range — apply immediately
+    this.applyHit(attacker, defender, damage, isAllyAttacker, label);
+  }
+
+  private killUnit(unit: CombatUnit): void {
+    unit.alive = false;
+    unit.sprite.setVelocity(0, 0);
+
+    // Revert all active status effects before removing unit
+    this.clearStatusEffects(unit);
+
+    // Clear forced targets pointing at this unit
+    for (const enemy of this.enemies) {
+      if (enemy.forcedTarget === unit) {
+        enemy.forcedTarget = undefined;
+        enemy.forcedTargetExpiry = undefined;
+      }
+    }
+
+    // Track defeated enemy for recruiting + XP
+    const isEnemy = this.enemies.includes(unit);
+    if (isEnemy) {
+      this.defeated.push({
+        riftlingKey: unit.riftlingKey,
+        texturePrefix: unit.texturePrefix,
+        name: unit.displayName,
+      });
+      // XP scales with enemy max HP (tougher enemies = more XP)
+      this._xpEarned += BASE_KILL_XP + Math.floor(unit.maxHp / 10);
+    }
+
+    this.scene.tweens.add({
+      targets: unit.sprite,
+      alpha: 0,
+      scale: 0,
+      duration: 400,
+      onComplete: () => {
+        unit.sprite.destroy();
+        unit.hpBar.destroy();
+      },
+    });
+  }
+
+  private checkCombatEnd(): void {
+    const aliveEnemies = this.enemies.filter((e) => e.alive);
+
+    if (aliveEnemies.length === 0) {
+      this.active = false;
+      this.cleanupCommandState();
+      for (const ally of this.allies) ally.hpBar.clear();
+      this.onRoomCleared?.(this.defeated);
+      return;
+    }
+
+    const aliveAllies = this.allies.filter((a) => a.alive);
+    if (aliveAllies.length === 0) {
+      this.active = false;
+      this.cleanupCommandState();
+      // TODO: all companions KO — swap from bench or game over
+    }
+  }
+
+  private cleanupCommandState(): void {
+    this._focusTarget = null;
+    this.focusRing?.destroy();
+    this.focusRing = undefined;
+    this._rallyActive = false;
+    this.clearAllRepositions();
+  }
+
+  // --- Status Effect System ---
+
+  private applyStatusEffect(unit: CombatUnit, effect: StatusEffect): void {
+    unit.statusEffects.push(effect);
+    switch (effect.stat) {
+      case 'defense': unit.defense += effect.amount; break;
+      case 'attack':  unit.attack  += effect.amount; break;
+      case 'speed':   unit.speed   += effect.amount; break;
+      case 'evasion': unit.evasion += effect.amount; break;
+    }
+  }
+
+  private tickStatusEffects(time: number): void {
+    const allUnits = [...this.allies, ...this.enemies];
+    for (const unit of allUnits) {
+      if (!unit.alive) continue;
+      for (let i = unit.statusEffects.length - 1; i >= 0; i--) {
+        const effect = unit.statusEffects[i];
+        if (time >= effect.expiresAt) {
+          switch (effect.stat) {
+            case 'defense': unit.defense -= effect.amount; break;
+            case 'attack':  unit.attack  -= effect.amount; break;
+            case 'speed':   unit.speed   -= effect.amount; break;
+            case 'evasion': unit.evasion -= effect.amount; break;
+          }
+          unit.statusEffects.splice(i, 1);
+        }
+      }
+      // Clear expired forced targets
+      if (unit.forcedTarget && unit.forcedTargetExpiry !== undefined && time >= unit.forcedTargetExpiry) {
+        unit.forcedTarget = undefined;
+        unit.forcedTargetExpiry = undefined;
+      }
+    }
+  }
+
+  private clearStatusEffects(unit: CombatUnit): void {
+    for (const effect of unit.statusEffects) {
+      switch (effect.stat) {
+        case 'defense': unit.defense -= effect.amount; break;
+        case 'attack':  unit.attack  -= effect.amount; break;
+        case 'speed':   unit.speed   -= effect.amount; break;
+        case 'evasion': unit.evasion -= effect.amount; break;
+      }
+    }
+    unit.statusEffects = [];
+    unit.igniteStacks = 0;
+    unit.nextIgniteTick = 0;
+    unit.blindMissChance = 0;
+    unit.blindExpiresAt = 0;
+    unit.briarDamage = 0;
+    unit.briarExpiresAt = 0;
+    unit.knockbackImmuneUntil = 0;
+    unit.phaseUntil = 0;
+    unit.damageReductionAmount = 0;
+    unit.damageReductionUntil = 0;
+    unit.markedDamageBonus = 0;
+    unit.markedUntil = 0;
+    unit.forcedTarget = undefined;
+    unit.forcedTargetExpiry = undefined;
+  }
+
+  // --- Ignite DoT system ---
+
+  private static readonly IGNITE_TICK_MS = 500;
+  private static readonly MAX_IGNITE_STACKS = 12;
+
+  /** Add ignite stacks to a unit, refreshing the tick timer. */
+  private addIgniteStacks(unit: CombatUnit, stacks: number): void {
+    unit.igniteStacks = Math.min(CombatManager.MAX_IGNITE_STACKS, unit.igniteStacks + stacks);
+    // Reset tick so the next tick fires from now (prevents burst tick on first stack)
+    if (unit.nextIgniteTick === 0) {
+      unit.nextIgniteTick = this.scene.time.now + CombatManager.IGNITE_TICK_MS;
+    }
+  }
+
+  /**
+   * Tick ignite DoT on all units. Each tick deals damage equal to current stacks,
+   * then decays by 1 stack. Orange tint flash + floating damage text.
+   */
+  private tickIgnite(time: number): void {
+    const allUnits = [...this.allies, ...this.enemies];
+    for (const unit of allUnits) {
+      if (!unit.alive || unit.igniteStacks <= 0) continue;
+      if (time < unit.nextIgniteTick) continue;
+
+      const dmg = unit.igniteStacks;
+      unit.hp = Math.max(0, unit.hp - dmg);
+
+      // Orange tint flash
+      unit.sprite.setTint(0xff6600);
+      this.scene.time.delayedCall(80, () => { if (unit.alive) unit.sprite.clearTint(); });
+
+      // Small floating damage number offset upward to avoid clashing with normal hits
+      this.showFloatingText(unit.sprite.x, unit.sprite.y - 12, `-${dmg}`, '#ff8800', 9);
+
+      // Decay one stack per tick
+      unit.igniteStacks -= 1;
+      unit.nextIgniteTick = unit.igniteStacks > 0 ? time + CombatManager.IGNITE_TICK_MS : 0;
+
+      if (unit.hp <= 0) this.killUnit(unit);
+    }
+  }
+
+  // --- Blind system ---
+
+  /** Apply or refresh a blind debuff on a unit. Stacks take the max of current and new. */
+  private applyBlind(unit: CombatUnit, missChance: number, duration: number): void {
+    unit.blindMissChance = Math.max(unit.blindMissChance, missChance);
+    unit.blindExpiresAt = Math.max(unit.blindExpiresAt, this.scene.time.now + duration);
+
+    unit.sprite.setTint(0xffffaa);
+    this.scene.time.delayedCall(150, () => { if (unit.alive) unit.sprite.clearTint(); });
+    this.showFloatingText(unit.sprite.x, unit.sprite.y, 'BLINDED', '#ffffaa', 9);
+  }
+
+  /** Expire blind debuffs once their duration has elapsed. */
+  private tickBlind(time: number): void {
+    const allUnits = [...this.allies, ...this.enemies];
+    for (const unit of allUnits) {
+      if (unit.blindMissChance > 0 && time >= unit.blindExpiresAt) {
+        unit.blindMissChance = 0;
+      }
+    }
+  }
+
+  /** Expire Hunter's Mark once its duration elapses. */
+  private tickHuntersMark(time: number): void {
+    const allUnits = [...this.allies, ...this.enemies];
+    for (const unit of allUnits) {
+      if (unit.markedDamageBonus > 0 && time >= unit.markedUntil) {
+        unit.markedDamageBonus = 0;
+      }
+    }
+  }
+
+  /** Expire briar debuffs once their duration has elapsed. */
+  private tickBriarExpiry(time: number): void {
+    const allUnits = [...this.allies, ...this.enemies];
+    for (const unit of allUnits) {
+      if (unit.briarDamage > 0 && time >= unit.briarExpiresAt) {
+        unit.briarDamage = 0;
+      }
+    }
+  }
+
+  // --- Beam move ---
+
+  private static readonly BEAM_LENGTH = 300;
+  private static readonly BEAM_TICK_MS = 1000;
+  private static readonly BEAM_TICKS = 3;
+  private static readonly BEAM_HIT_RADIUS = 16;
+
+  /**
+   * Solar Flare beam — fires a straight line from attacker toward target.
+   * Persists for BEAM_TICKS seconds, dealing slot.power damage/tick to every enemy
+   * whose centre falls within BEAM_HIT_RADIUS pixels of the beam line.
+   */
+  private executeBeam(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const sx = attacker.sprite.x;
+    const sy = attacker.sprite.y;
+    const dx = target.sprite.x - sx;
+    const dy = target.sprite.y - sy;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = dx / len;
+    const ny = dy / len;
+    const ex = sx + nx * CombatManager.BEAM_LENGTH;
+    const ey = sy + ny * CombatManager.BEAM_LENGTH;
+
+    const enemies = isAlly ? this.enemies : this.allies;
+
+    // Beam visual — bright yellow-white line that fades over the duration
+    const beamGfx = this.scene.add.graphics().setDepth(245);
+    const totalDuration = CombatManager.BEAM_TICKS * CombatManager.BEAM_TICK_MS;
+
+    const drawBeam = (alpha: number) => {
+      beamGfx.clear();
+      beamGfx.lineStyle(8, 0xffffcc, alpha * 0.4);
+      beamGfx.beginPath(); beamGfx.moveTo(sx, sy); beamGfx.lineTo(ex, ey); beamGfx.strokePath();
+      beamGfx.lineStyle(3, 0xffffff, alpha);
+      beamGfx.beginPath(); beamGfx.moveTo(sx, sy); beamGfx.lineTo(ex, ey); beamGfx.strokePath();
+    };
+    drawBeam(1);
+
+    this.scene.tweens.add({
+      targets: { alpha: 1 },
+      alpha: 0,
+      duration: totalDuration,
+      onUpdate: (tween) => drawBeam(1 - tween.progress),
+      onComplete: () => beamGfx.destroy(),
+    });
+
+    // Tick damage — fires BEAM_TICKS times, once per second
+    const hitEnemiesInBeam = () => {
+      for (const enemy of enemies) {
+        if (!enemy.alive) continue;
+        if (this.distToSegment(enemy.sprite.x, enemy.sprite.y, sx, sy, ex, ey) <= CombatManager.BEAM_HIT_RADIUS) {
+          this.applyHit(attacker, enemy, slot.power, isAlly, `${slot.name} -${slot.power}`);
+        }
+      }
+    };
+
+    for (let tick = 0; tick < CombatManager.BEAM_TICKS; tick++) {
+      this.scene.time.delayedCall(tick * CombatManager.BEAM_TICK_MS, () => {
+        if (!attacker.alive) return;
+        hitEnemiesInBeam();
+      });
+    }
+  }
+
+  /** Distance from point (px, py) to line segment (x1,y1)→(x2,y2). */
+  private distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+    const dx = x2 - x1, dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq));
+    return Math.sqrt((px - (x1 + t * dx)) ** 2 + (py - (y1 + t * dy)) ** 2);
+  }
+
+  // --- Briar debuff ---
+
+  /** Apply briar to a unit — they take damage each time they attack. */
+  private applyBriar(unit: CombatUnit, damage: number, duration: number): void {
+    unit.briarDamage = Math.max(unit.briarDamage, damage);
+    unit.briarExpiresAt = Math.max(unit.briarExpiresAt, this.scene.time.now + duration);
+    unit.sprite.setTint(0x44cc44);
+    this.scene.time.delayedCall(150, () => { if (unit.alive) unit.sprite.clearTint(); });
+    this.showFloatingText(unit.sprite.x, unit.sprite.y, 'BRIAR', '#44cc44', 9);
+  }
+
+  // --- Root ---
+
+  /**
+   * Fully root a unit: zero their speed via status effect and push their lastAttackTime
+   * forward so they can't attack until the root expires.
+   */
+  private applyRoot(unit: CombatUnit, duration: number): void {
+    const now = this.scene.time.now;
+    // Zero speed via status effect so the AI won't move
+    this.applyStatusEffect(unit, {
+      id: 'root',
+      stat: 'speed',
+      amount: -unit.speed,
+      expiresAt: now + duration,
+    });
+    // Prevent attacks by pushing the last-attack timestamp forward
+    unit.lastAttackTime = now + duration;
+    unit.sprite.setVelocity(0, 0);
+
+    // Vine visual — small green dots pinned around the unit
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2;
+      const vx = Math.cos(angle) * 14;
+      const vy = Math.sin(angle) * 14;
+      const vine = this.scene.add.circle(unit.sprite.x + vx, unit.sprite.y + vy, 2, 0x228822, 0.85).setDepth(251);
+      this.scene.tweens.add({
+        targets: vine,
+        alpha: 0,
+        duration: duration * 0.9,
+        onComplete: () => vine.destroy(),
+      });
+    }
+    this.showFloatingText(unit.sprite.x, unit.sprite.y, 'ROOTED', '#22aa22', 9);
+  }
+
+  // --- Hunter's Mark ---
+
+  /** Mark a target — all damage they receive is amplified for the duration. */
+  private applyHuntersMark(unit: CombatUnit, bonus: number, duration: number): void {
+    unit.markedDamageBonus = Math.max(unit.markedDamageBonus, bonus);
+    unit.markedUntil = Math.max(unit.markedUntil, this.scene.time.now + duration);
+    unit.sprite.setTint(0x9933cc);
+    this.scene.time.delayedCall(150, () => { if (unit.alive) unit.sprite.clearTint(); });
+    this.showFloatingText(unit.sprite.x, unit.sprite.y, 'MARKED', '#9933cc', 9);
+  }
+
+  // --- Stun (earth seismic shock) ---
+
+  /**
+   * Stun a unit: same mechanism as root (zero speed, lock attacks) but shorter
+   * duration and with a yellow flash + orbiting spark visual instead of vines.
+   */
+  private applyStun(unit: CombatUnit, duration: number): void {
+    const now = this.scene.time.now;
+    this.applyStatusEffect(unit, {
+      id: 'stun',
+      stat: 'speed',
+      amount: -unit.speed,
+      expiresAt: now + duration,
+    });
+    unit.lastAttackTime = now + duration;
+    unit.sprite.setVelocity(0, 0);
+
+    unit.sprite.setTint(0xffff44);
+    this.scene.time.delayedCall(150, () => { if (unit.alive) unit.sprite.clearTint(); });
+    this.showFloatingText(unit.sprite.x, unit.sprite.y, 'STUNNED', '#ffff44', 9);
+
+    // Three small sparks orbit the unit and fade over the stun duration
+    for (let i = 0; i < 3; i++) {
+      const angle = (i / 3) * Math.PI * 2;
+      const spark = this.scene.add
+        .circle(unit.sprite.x + Math.cos(angle) * 10, unit.sprite.y + Math.sin(angle) * 10 - 10, 2, 0xffff44, 0.9)
+        .setDepth(251);
+      this.scene.tweens.add({
+        targets: spark,
+        alpha: 0,
+        duration: duration * 0.85,
+        onComplete: () => spark.destroy(),
+      });
+    }
+  }
+
+  // --- Shared helpers ---
+
+  /** Apply a stat buff to the caster if the slot defines one. Used by blast, taunt, etc. */
+  private applySelfBuffFromSlot(caster: CombatUnit, slot: MoveSlot): void {
+    if (!slot.selfBuffStat || !slot.selfBuffAmount || !caster.alive) return;
+    this.applyStatusEffect(caster, {
+      id: `self_${slot.selfBuffStat}`,
+      stat: slot.selfBuffStat,
+      amount: slot.selfBuffAmount,
+      expiresAt: this.scene.time.now + (slot.selfBuffDuration ?? 2000),
+    });
+    this.showFloatingText(caster.sprite.x, caster.sprite.y,
+      `+${slot.selfBuffAmount} ${slot.selfBuffStat.toUpperCase()}`, '#aaffaa', 9);
+  }
+
+  /** Apply a stat debuff to a target unit. Used by Claw Crush (waterlogged), etc.
+   *  If the same debuff id is already active, refreshes its duration instead of stacking. */
+  private applyStatDebuff(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot): void {
+    if (!slot.appliesStatDebuff || !slot.debuffAmount || !target.alive) return;
+    const debuffId = `debuff_${slot.appliesStatDebuff}`;
+    const existing = target.statusEffects.find((e) => e.id === debuffId);
+    if (existing) {
+      // Refresh duration only — no additional stat penalty
+      existing.expiresAt = this.scene.time.now + (slot.debuffDuration ?? 3000);
+      return;
+    }
+    this.applyStatusEffect(target, {
+      id: debuffId,
+      stat: slot.appliesStatDebuff,
+      amount: -slot.debuffAmount,
+      expiresAt: this.scene.time.now + (slot.debuffDuration ?? 3000),
+    });
+    const labels: Record<string, string> = { defense: 'DEF↓', attack: 'ATK↓', speed: 'SPD↓', evasion: 'EVA↓' };
+    this.showFloatingText(target.sprite.x, target.sprite.y, labels[slot.appliesStatDebuff] ?? 'DEBUFF', '#88ccff', 9);
+    // Blue-tint flash on target (waterlogged look)
+    target.sprite.setTint(0x88aaff);
+    this.scene.time.delayedCall(150, () => { if (target.alive) target.sprite.clearTint(); });
+    void attacker; // suppress unused warning
+  }
+
+  // --- Leap move (hunter backline jump) ---
+
+  /**
+   * Hunter leap — arcs to the highest-range backline enemy via a bezier curve.
+   * A ground shadow shrinks as the sprite rises, selling the "in the air" read.
+   * Deals pierce damage and applies debuff on landing.
+   */
+  private executeLeap(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const sx = attacker.sprite.x;
+    const sy = attacker.sprite.y;
+
+    // Land just behind the target
+    const dx = target.sprite.x - sx;
+    const dy = target.sprite.y - sy;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const landX = Phaser.Math.Clamp(target.sprite.x + nx * 32, 24, 456);
+    const landY = Phaser.Math.Clamp(target.sprite.y + ny * 32, 24, 296);
+
+    // Bezier arc — control points arc upward over the path
+    const arcH = Math.min(70, dist * 0.45);
+    const path = new Phaser.Curves.Path(sx, sy);
+    path.cubicBezierTo(
+      landX, landY,
+      sx + dx * 0.25, sy - arcH,
+      sx + dx * 0.75, landY - arcH * 0.4,
+    );
+
+    // Ground shadow — follows X, stays near ground, shrinks at apex
+    const shadow = this.scene.add.ellipse(sx, sy + 6, 16, 7, 0x000000, 0.3).setDepth(0);
+
+    // Shadow step (Dusk Dash) — blink instead of arc
+    if (slot.shadowStep) {
+      this.scene.tweens.add({
+        targets: attacker.sprite,
+        alpha: 0,
+        duration: 100,
+        onComplete: () => {
+          // Smoke puff at departure
+          const smoke = this.scene.add.circle(sx, sy, 8, 0x442255, 0.5).setDepth(250);
+          this.scene.tweens.add({ targets: smoke, scale: 2.5, alpha: 0, duration: 250, onComplete: () => smoke.destroy() });
+          attacker.sprite.setPosition(landX, landY);
+          if (attacker.alive) (attacker.sprite.body as Phaser.Physics.Arcade.Body).reset(landX, landY);
+          this.scene.tweens.add({
+            targets: attacker.sprite,
+            alpha: 1,
+            duration: 100,
+            onComplete: () => {
+              this.spawnImpactFlash(landX, landY, TYPE_COLORS[attacker.elementType] ?? 0x9966cc, slot.isSignature);
+              if (target.alive) {
+                const variance = Math.floor(Math.random() * 4) - 2;
+                const damage = Math.max(1, slot.power + variance);
+                this.applyHit(attacker, target, damage, isAlly,
+                  isAlly ? `${slot.name} -${damage}` : `-${damage}`);
+                if (slot.appliesSlowOnLand) {
+                  const slowAmt = -Math.floor(target.speed * 0.4);
+                  this.applyStatusEffect(target, {
+                    id: 'slow', stat: 'speed', amount: slowAmt,
+                    expiresAt: this.scene.time.now + (slot.duration ?? 2500),
+                  });
+                  target.sprite.setTint(0x44cccc);
+                  this.scene.time.delayedCall(200, () => { if (target.alive) target.sprite.clearTint(); });
+                  this.showFloatingText(target.sprite.x, target.sprite.y, 'SLOWED', '#44cccc', 9);
+                }
+              }
+            },
+          });
+        },
+      });
+      return;
+    }
+
+    const follower = { t: 0, vec: new Phaser.Math.Vector2() };
+    this.scene.tweens.add({
+      targets: follower,
+      t: 1,
+      duration: 320,
+      ease: 'Sine.InOut',
+      onUpdate: () => {
+        path.getPoint(follower.t, follower.vec);
+        attacker.sprite.setPosition(follower.vec.x, follower.vec.y);
+        // Shadow tracks x, interpolates y toward landing, shrinks at apex
+        const apex = 4 * follower.t * (1 - follower.t); // 0→1→0
+        shadow.setPosition(follower.vec.x, sy + 6 + (landY - sy) * follower.t);
+        shadow.setScale(1 - apex * 0.65);
+        shadow.setAlpha(0.3 * (1 - apex * 0.75));
+      },
+      onComplete: () => {
+        shadow.destroy();
+        attacker.sprite.setPosition(landX, landY);
+        if (attacker.alive) (attacker.sprite.body as Phaser.Physics.Arcade.Body).reset(landX, landY);
+
+        // Landing impact
+        const typeColor = TYPE_COLORS[attacker.elementType] ?? 0x44cc44;
+        this.spawnImpactFlash(landX, landY, typeColor, slot.isSignature);
+        this.scene.cameras.main.shake(90, 0.003);
+
+        // Dust ring on landing
+        const ring = this.scene.add.circle(landX, landY, 2, typeColor, 0).setDepth(250);
+        ring.setStrokeStyle(2, typeColor, 0.6);
+        this.scene.tweens.add({
+          targets: ring,
+          scale: { from: 1, to: 10 },
+          alpha: 0,
+          duration: 250,
+          onComplete: () => ring.destroy(),
+        });
+
+        // Deal pierce damage + stat debuff to target
+        if (target.alive) {
+          const variance = Math.floor(Math.random() * 4) - 2;
+          const damage = Math.max(1, slot.power + variance);
+          this.applyHit(attacker, target, damage, isAlly,
+            isAlly ? `${slot.name} -${damage}` : `-${damage}`, true);
+          if (slot.appliesStatDebuff) this.applyStatDebuff(attacker, target, slot);
+        }
+      },
+    });
+  }
+
+  // --- Phantom Dive (Hollowcrow phase + strike) ---
+
+  private static readonly PHASE_DURATION = 800;
+
+  /**
+   * Phase out for PHASE_DURATION ms — all incoming damage is blocked during phase.
+   * Shadow afterimages trail the attacker. Then dive in for a pierce strike.
+   */
+  private executePhantomDive(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    attacker.phaseUntil = this.scene.time.now + CombatManager.PHASE_DURATION;
+
+    // Fade to semi-transparent
+    this.scene.tweens.add({ targets: attacker.sprite, alpha: 0.25, duration: 120 });
+
+    // Shadow afterimage trail during phase
+    const shadowTimer = this.scene.time.addEvent({
+      delay: 80,
+      repeat: Math.floor(CombatManager.PHASE_DURATION / 80),
+      callback: () => {
+        if (!attacker.alive) return;
+        const shadow = this.scene.add
+          .image(attacker.sprite.x, attacker.sprite.y, attacker.sprite.texture.key)
+          .setAlpha(0.18).setScale(attacker.sprite.scale).setDepth(attacker.sprite.depth - 1).setTint(0x440066);
+        this.scene.tweens.add({ targets: shadow, alpha: 0, duration: 220, onComplete: () => shadow.destroy() });
+      },
+    });
+
+    // After phase: restore and strike
+    this.scene.time.delayedCall(CombatManager.PHASE_DURATION, () => {
+      shadowTimer.destroy();
+      attacker.phaseUntil = 0;
+      this.scene.tweens.add({ targets: attacker.sprite, alpha: 1, duration: 100 });
+
+      if (!attacker.alive) return;
+      if (target.alive) {
+        const variance = Math.floor(Math.random() * 4) - 2;
+        const damage = Math.max(1, slot.power + variance);
+        this.spawnImpactFlash(target.sprite.x, target.sprite.y, 0x9900cc, slot.isSignature);
+        this.scene.cameras.main.shake(100, 0.003);
+        this.applyHit(attacker, target, damage, isAlly,
+          isAlly ? `${slot.name} -${damage}` : `-${damage}`, true);
+      }
+    });
+  }
+
+  // --- Dash-through move (Torrent Rush) ---
+
+  private static readonly DASH_LINE_RADIUS = 20;
+
+  /**
+   * Dash through a line from attacker toward target, hitting every enemy whose
+   * centre falls within DASH_LINE_RADIUS of the path. Hits are staggered as
+   * Rivelet passes through. Attacker repositions to just past the primary target.
+   */
+  private executeDashThrough(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const sx = attacker.sprite.x;
+    const sy = attacker.sprite.y;
+    const tdx = target.sprite.x - sx;
+    const tdy = target.sprite.y - sy;
+    const tLen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+    const nx = tdx / tLen;
+    const ny = tdy / tLen;
+
+    const endX = Phaser.Math.Clamp(target.sprite.x + nx * 50, 24, 480 - 24);
+    const endY = Phaser.Math.Clamp(target.sprite.y + ny * 50, 24, 320 - 24);
+
+    const enemies = isAlly ? this.enemies : this.allies;
+    const variance = Math.floor(Math.random() * 4) - 2;
+    const damage = Math.max(1, slot.power + variance);
+
+    // Gather all enemies near the dash line, sorted nearest-first
+    const hits: { unit: CombatUnit; d: number }[] = [];
+    for (const enemy of enemies) {
+      if (!enemy.alive) continue;
+      if (this.distToSegment(enemy.sprite.x, enemy.sprite.y, sx, sy, endX, endY) <= CombatManager.DASH_LINE_RADIUS) {
+        hits.push({ unit: enemy, d: Phaser.Math.Distance.Between(sx, sy, enemy.sprite.x, enemy.sprite.y) });
+      }
+    }
+    hits.sort((a, b) => a.d - b.d);
+
+    // Stagger hits as Rivelet passes through each enemy
+    hits.forEach(({ unit }, i) => {
+      this.scene.time.delayedCall(i * 55, () => {
+        if (!unit.alive || !attacker.alive) return;
+        this.spawnImpactFlash(unit.sprite.x, unit.sprite.y, 0x44aaff, slot.isSignature && i === 0);
+        this.applyHit(attacker, unit, damage, isAlly, isAlly ? `${slot.name} -${damage}` : `-${damage}`, true);
+        if (slot.appliesStatDebuff) this.applyStatDebuff(attacker, unit, slot);
+      });
+    });
+
+    // Elemental trail during the dash (color matches attacker's type)
+    const trailColor = TYPE_COLORS[attacker.elementType] ?? 0x44aaff;
+    const trailTimer = this.scene.time.addEvent({
+      delay: 22,
+      repeat: 8,
+      callback: () => {
+        const dot = this.scene.add.circle(attacker.sprite.x, attacker.sprite.y, 3, trailColor, 0.55).setDepth(249);
+        this.scene.tweens.add({ targets: dot, alpha: 0, duration: 200, onComplete: () => dot.destroy() });
+      },
+    });
+
+    this.scene.tweens.add({
+      targets: attacker.sprite,
+      x: endX,
+      y: endY,
+      duration: 170,
+      ease: 'Cubic.Out',
+      onComplete: () => {
+        trailTimer.destroy();
+        if (attacker.alive) (attacker.sprite.body as Phaser.Physics.Arcade.Body).reset(endX, endY);
+      },
+    });
+  }
+
+  // --- Spin move ---
+
+  /**
+   * Spin: Tidecrawler-style caster-centred sweep. Hits all enemies within slot.radius
+   * simultaneously with melee damage + knockback radiating outward from the caster.
+   */
+  private executeSpin(attacker: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const radius = slot.radius ?? 50;
+    const enemies = isAlly ? this.enemies : this.allies;
+    const cx = attacker.sprite.x;
+    const cy = attacker.sprite.y;
+    const typeColor = TYPE_COLORS[attacker.elementType] ?? 0x44aaff;
+
+    // Radial sweep visual — two expanding rings, offset slightly in timing
+    for (let r = 0; r < 2; r++) {
+      this.scene.time.delayedCall(r * 80, () => {
+        const ring = this.scene.add.circle(cx, cy, 4, typeColor, 0).setDepth(250);
+        ring.setStrokeStyle(3 - r, typeColor, 0.7 - r * 0.2);
+        this.scene.tweens.add({
+          targets: ring,
+          scale: { from: 1, to: radius / 4 },
+          alpha: 0,
+          duration: 280 + r * 60,
+          onComplete: () => ring.destroy(),
+        });
+      });
+    }
+
+    // Camera shake — heavy anchor move
+    this.scene.cameras.main.shake(120, 0.004);
+
+    // Damage all enemies in radius
+    const variance = Math.floor(Math.random() * 4) - 2;
+    const damage = Math.max(1, slot.power + variance);
+
+    for (const enemy of enemies) {
+      if (!enemy.alive) continue;
+      const dx = enemy.sprite.x - cx;
+      const dy = enemy.sprite.y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > radius) continue;
+
+      this.spawnImpactFlash(enemy.sprite.x, enemy.sprite.y, typeColor, slot.isSignature);
+      this.applyHit(attacker, enemy, damage, isAlly, isAlly ? `${slot.name} -${damage}` : `-${damage}`);
+
+      // Per-hit effects: stat debuff (Hex Screech curse) and optional slow
+      if (enemy.alive) {
+        if (slot.appliesStatDebuff) this.applyStatDebuff(attacker, enemy, slot);
+        if (slot.appliesSlowToAllHit) {
+          const slowAmt = -Math.floor(enemy.speed * 0.4);
+          this.applyStatusEffect(enemy, {
+            id: 'slow', stat: 'speed', amount: slowAmt,
+            expiresAt: this.scene.time.now + (slot.duration ?? 3000),
+          });
+          enemy.sprite.setTint(0x44cccc);
+          this.scene.time.delayedCall(200, () => { if (enemy.alive) enemy.sprite.clearTint(); });
+          this.showFloatingText(enemy.sprite.x, enemy.sprite.y, 'SLOWED', '#44cccc', 9);
+        }
+      }
+
+      // Knockback radiates outward from spin centre
+      if (enemy.alive && dist > 0) {
+        const force = 60;
+        enemy.sprite.setVelocity((dx / dist) * force, (dy / dist) * force);
+        this.scene.time.delayedCall(120, () => { if (enemy.alive) enemy.sprite.setVelocity(0, 0); });
+      }
+    }
+  }
+
+  /**
+   * Move kind dispatcher — routes each move to its specific implementation.
+   * `target` is the primary target (enemy for damage moves, ally for support moves).
+   */
+  private dealMoveDamage(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot): void {
+    const isAlly = this.allies.includes(attacker);
+
+    // Play attack animation on attacker if one is registered for this move
+    if (slot.attackAnim) {
+      const dir = this.unitLastDir.get(attacker) ?? 'south';
+      playAttackAnim(attacker.sprite, attacker.texturePrefix, slot.attackAnim, dir, this.scene.anims, () => {
+        if (attacker.alive) stopWalkAnim(attacker.sprite, attacker.texturePrefix, this.unitLastDir.get(attacker) ?? 'south');
+      });
+    }
+
+    // Signature move polish: screen shake + white flash on attacker
+    if (slot.isSignature) {
+      this.scene.cameras.main.shake(150, 0.003);
+      attacker.sprite.setTint(0xffffff);
+      this.scene.time.delayedCall(100, () => {
+        if (attacker.alive) attacker.sprite.clearTint();
+      });
+    }
+
+    switch (slot.kind) {
+      case 'strike':
+        this.executeDamageMove(attacker, target, slot, isAlly, false);
+        break;
+      case 'pierce':
+        if (slot.repositions) {
+          this.executeFireDash(attacker, target, slot, isAlly);
+        } else if (slot.dashThrough) {
+          this.executeDashThrough(attacker, target, slot, isAlly);
+        } else if (slot.phasesBeforeStrike) {
+          this.executePhantomDive(attacker, target, slot, isAlly);
+        } else {
+          this.executeDamageMove(attacker, target, slot, isAlly, true);
+        }
+        break;
+      case 'blast':
+        this.executeBlast(attacker, target, slot, isAlly);
+        break;
+      case 'barrage':
+        this.executeBarrage(attacker, slot, isAlly);
+        break;
+      case 'beam':
+        this.executeBeam(attacker, target, slot, isAlly);
+        break;
+      case 'spin':
+        this.executeSpin(attacker, slot, isAlly);
+        break;
+      case 'leap':
+        this.executeLeap(attacker, target, slot, isAlly);
+        break;
+      case 'drain':
+        this.executeDrain(attacker, target, slot, isAlly);
+        break;
+      case 'heal':
+        this.executeHeal(attacker, target, slot);
+        break;
+      case 'shield':
+        this.executeShield(target, slot);
+        break;
+      case 'rally_buff':
+        this.executeRallyBuff(attacker, slot);
+        break;
+      case 'slow':
+        this.executeSlow(attacker, target, slot, isAlly);
+        break;
+      case 'taunt':
+        this.executeTaunt(attacker, slot);
+        break;
+      default:
+        this.executeDamageMove(attacker, target, slot, isAlly, false);
+    }
+  }
+
+  /** Fire a single-target damage hit (used by strike and pierce). */
+  private executeDamageMove(attacker: CombatUnit, defender: CombatUnit, slot: MoveSlot, isAlly: boolean, pierce: boolean): void {
+    const variance = Math.floor(Math.random() * 4) - 2;
+    const defBonus = slot.defenseScaledBonus ? Math.floor(attacker.defense * slot.defenseScaledBonus) : 0;
+    const missingHpFraction = 1 - (defender.hp / defender.maxHp);
+    const execBonus = slot.executeBonusPct ? Math.floor(missingHpFraction * 100 * slot.executeBonusPct) : 0;
+    const damage = Math.max(1, slot.power + variance + defBonus + execBonus);
+    const label = isAlly ? `${slot.name} -${damage}` : `-${damage}`;
+    // Pierce: white projectile, faster travel, white impact
+    const colorOverride = pierce ? 0xeeeeff : undefined;
+    const speed = pierce ? 0.6 : 1;
+
+    const onHit = (slot.appliesIgnite || slot.appliesBlind || slot.appliesStatDebuff)
+      ? () => {
+          if (!defender.alive) return;
+          if (slot.appliesIgnite)    this.addIgniteStacks(defender, slot.appliesIgnite!);
+          if (slot.appliesBlind)     this.applyBlind(defender, slot.appliesBlind!, slot.blindDuration ?? 2000);
+          if (slot.appliesStatDebuff) this.applyStatDebuff(attacker, defender, slot);
+        }
+      : undefined;
+
+    this.fireProjectileOrMelee(attacker, defender, damage, isAlly, label, slot.isSignature, pierce,
+      onHit, undefined, colorOverride, speed, colorOverride);
+  }
+
+  /**
+   * Fire Dash — pierce damage + Emberhound repositions behind the target.
+   * Direction: normalize(target - attacker), then place attacker 36px past target.
+   */
+  private executeFireDash(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const variance = Math.floor(Math.random() * 4) - 2;
+    const damage = Math.max(1, slot.power + variance);
+    const label = isAlly ? `${slot.name} -${damage}` : `-${damage}`;
+
+    // Compute behind position before the tween starts
+    const dx = target.sprite.x - attacker.sprite.x;
+    const dy = target.sprite.y - attacker.sprite.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const behindX = Phaser.Math.Clamp(target.sprite.x + nx * 36, 24, (this.walls.scene.sys.game.config.width as number) - 24);
+    const behindY = Phaser.Math.Clamp(target.sprite.y + ny * 36, 24, (this.walls.scene.sys.game.config.height as number) - 24);
+
+    // Deliver the hit immediately (melee-range pierce)
+    this.spawnImpactFlash(target.sprite.x, target.sprite.y, 0xeeeeff, slot.isSignature);
+    this.applyHit(attacker, target, damage, isAlly, label, true);
+
+    // Then dash attacker to behind position
+    this.scene.tweens.add({
+      targets: attacker.sprite,
+      x: behindX,
+      y: behindY,
+      duration: 150,
+      ease: 'Cubic.Out',
+      onComplete: () => {
+        if (attacker.alive) (attacker.sprite.body as Phaser.Physics.Arcade.Body).reset(behindX, behindY);
+      },
+    });
+
+    // Orange-white motion trail during the dash
+    const trailTimer = this.scene.time.addEvent({
+      delay: 25,
+      repeat: 5,
+      callback: () => {
+        const dot = this.scene.add.circle(attacker.sprite.x, attacker.sprite.y, 3, 0xff6622, 0.5).setDepth(249);
+        this.scene.tweens.add({ targets: dot, alpha: 0, duration: 180, onComplete: () => dot.destroy() });
+      },
+    });
+    this.scene.time.delayedCall(200, () => trailTimer.destroy());
+  }
+
+  /** Blast: hit primary target + AoE splash to nearby enemies. */
+  private executeBlast(attacker: CombatUnit, defender: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const variance = Math.floor(Math.random() * 4) - 2;
+    const damage = Math.max(1, slot.power + variance);
+    const label = isAlly ? `${slot.name} -${damage}` : `-${damage}`;
+    const radius = slot.radius ?? 45;
+    const typeColor = TYPE_COLORS[attacker.elementType] ?? 0xffcc44;
+    const enemies = isAlly ? this.enemies : this.allies;
+
+    const onHit = () => {
+      // AoE visual — expanding circle at impact point
+      const aoe = this.scene.add.circle(defender.sprite.x, defender.sprite.y, 1, typeColor, 0.35).setDepth(250);
+      this.scene.tweens.add({
+        targets: aoe,
+        scale: { from: 1, to: radius },
+        alpha: 0,
+        duration: 300,
+        onComplete: () => aoe.destroy(),
+      });
+
+      // Apply ignite / blind to primary target
+      if (slot.appliesIgnite && defender.alive) this.addIgniteStacks(defender, slot.appliesIgnite);
+      if (slot.appliesBlind  && defender.alive) this.applyBlind(defender, slot.appliesBlind, slot.blindDuration ?? 2000);
+
+      // Hit secondary targets in radius
+      const splashDamage = Math.floor(damage * 0.6);
+      for (const enemy of enemies) {
+        if (!enemy.alive || enemy === defender) continue;
+        const dx = enemy.sprite.x - defender.sprite.x;
+        const dy = enemy.sprite.y - defender.sprite.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= radius) {
+          this.applyHit(attacker, enemy, splashDamage, isAlly, `-${splashDamage}`);
+          if (slot.appliesIgnite) this.addIgniteStacks(enemy, slot.appliesIgnite);
+          if (slot.appliesBlind)  this.applyBlind(enemy, slot.appliesBlind, slot.blindDuration ?? 2000);
+          if (slot.stunsRadius)   this.applyStun(enemy, slot.stunDuration ?? 800);
+        }
+      }
+
+      // Stun primary target too if stunsRadius
+      if (slot.stunsRadius && defender.alive) this.applyStun(defender, slot.stunDuration ?? 800);
+
+      // Self-buff: apply to caster after the blast lands (Luminova evasion boost etc.)
+      this.applySelfBuffFromSlot(attacker, slot);
+    };
+
+    this.fireProjectileOrMelee(attacker, defender, damage, isAlly, label, slot.isSignature, false, onHit);
+  }
+
+  /** Barrage: hit multiple random enemies; optionally refracts each bolt to a nearby secondary target. */
+  private executeBarrage(attacker: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const enemies = isAlly ? this.enemies : this.allies;
+    const aliveTargets = enemies.filter((e) => e.alive);
+    if (aliveTargets.length === 0) return;
+
+    const hitCount = slot.hits ?? (2 + Math.floor(Math.random() * 2));
+    const reducedPower = Math.floor(slot.power * 0.6);
+
+    for (let i = 0; i < hitCount; i++) {
+      const primary = aliveTargets[Math.floor(Math.random() * aliveTargets.length)];
+      this.scene.time.delayedCall(i * 100, () => {
+        if (!primary.alive || !attacker.alive) return;
+        const variance = Math.floor(Math.random() * 4) - 2;
+        const damage = Math.max(1, reducedPower + variance);
+        const label = isAlly ? `${slot.name} -${damage}` : `-${damage}`;
+
+        // Combined on-hit: stat debuff + briar + optional refraction
+        const onHit = (slot.refracts || slot.appliesBriar || slot.appliesStatDebuff) ? () => {
+          if (slot.appliesStatDebuff && primary.alive) this.applyStatDebuff(attacker, primary, slot);
+          if (slot.appliesBriar && primary.alive) {
+            this.applyBriar(primary, slot.appliesBriar, slot.briarDuration ?? 4000);
+          }
+          if (slot.refracts && primary.alive) {
+            let secondary: CombatUnit | null = null;
+            let closestDist = 60;
+            for (const e of enemies) {
+              if (!e.alive || e === primary) continue;
+              const d = Phaser.Math.Distance.Between(primary.sprite.x, primary.sprite.y, e.sprite.x, e.sprite.y);
+              if (d < closestDist) { closestDist = d; secondary = e; }
+            }
+            if (secondary) {
+              const refractDamage = Math.max(1, Math.floor(reducedPower * 0.8));
+              this.scene.time.delayedCall(80, () => {
+                if (!secondary!.alive || !attacker.alive) return;
+                this.fireProjectileOrMelee(attacker, secondary!, refractDamage, isAlly,
+                  isAlly ? `${slot.name} -${refractDamage}` : `-${refractDamage}`, false, false, undefined, 1.5, 0xffeeaa);
+              });
+            }
+          }
+        } : undefined;
+
+        this.fireProjectileOrMelee(attacker, primary, damage, isAlly, label, false, false, onHit, 2);
+      });
+    }
+  }
+
+  /** Drain: strike damage + heal attacker for a portion. */
+  private executeDrain(attacker: CombatUnit, defender: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const variance = Math.floor(Math.random() * 4) - 2;
+    // Bonus damage per ignite stack on target (Flame Charge)
+    const igniteBonusDmg = slot.bonusPerIgnite ? Math.floor(defender.igniteStacks * slot.bonusPerIgnite) : 0;
+    const damage = Math.max(1, slot.power + variance + igniteBonusDmg);
+    const label = isAlly ? `${slot.name} -${damage}` : `-${damage}`;
+    const drainRatio = slot.drainRatio ?? 0.3;
+
+    const onHit = () => {
+      // Hunter's Mark (Shadow Bite)
+      if (slot.appliesHuntersMark && defender.alive) {
+        this.applyHuntersMark(defender, slot.markBonus ?? 0.25, slot.markDuration ?? 4000);
+      }
+
+      const healAmount = Math.max(1, Math.floor(damage * drainRatio));
+      attacker.hp = Math.min(attacker.maxHp, attacker.hp + healAmount);
+
+      // Green drain orb tweens from defender to attacker
+      const drainOrb = this.scene.add.circle(defender.sprite.x, defender.sprite.y, 3, 0x44ff66).setDepth(250);
+      this.scene.tweens.add({
+        targets: drainOrb,
+        x: attacker.sprite.x,
+        y: attacker.sprite.y,
+        duration: 200,
+        onComplete: () => {
+          drainOrb.destroy();
+          this.showFloatingText(attacker.sprite.x, attacker.sprite.y, `+${healAmount}`, '#44ff66', 10);
+        },
+      });
+
+      // Pull target toward attacker (Undertow)
+      if (slot.pullsTarget && defender.alive) {
+        const pdx = attacker.sprite.x - defender.sprite.x;
+        const pdy = attacker.sprite.y - defender.sprite.y;
+        const pLen = Math.sqrt(pdx * pdx + pdy * pdy) || 1;
+        const pullForce = 80;
+        defender.sprite.setVelocity((pdx / pLen) * pullForce, (pdy / pLen) * pullForce);
+        this.scene.time.delayedCall(180, () => { if (defender.alive) defender.sprite.setVelocity(0, 0); });
+        this.showFloatingText(defender.sprite.x, defender.sprite.y, 'PULLED', '#44aaff', 9);
+      }
+    };
+
+    // Greenish projectile for drain
+    this.fireProjectileOrMelee(attacker, defender, damage, isAlly, label, slot.isSignature, false,
+      onHit, undefined, 0x66cc66, 1, 0x44ff66);
+  }
+
+  /** Heal: restore HP to an ally. */
+  private executeHeal(_attacker: CombatUnit, target: CombatUnit, slot: MoveSlot): void {
+    const variance = Math.floor(Math.random() * 4) - 2;
+    const healAmount = Math.max(1, slot.power + variance);
+    target.hp = Math.min(target.maxHp, target.hp + healAmount);
+
+    target.sprite.setTint(0x44ff66);
+    this.scene.time.delayedCall(120, () => {
+      if (target.alive) target.sprite.clearTint();
+    });
+
+    this.showFloatingText(target.sprite.x, target.sprite.y, `${slot.name} +${healAmount}`, '#44ff66', 10);
+  }
+
+  /** Shield: grant temporary defense buff, optionally with thorns. */
+  private executeShield(target: CombatUnit, slot: MoveSlot): void {
+    const buffAmount = slot.power;
+    const duration = slot.duration ?? 5000;
+    const time = this.scene.time.now;
+
+    this.applyStatusEffect(target, {
+      id: 'shield',
+      stat: 'defense',
+      amount: buffAmount,
+      expiresAt: time + duration,
+      thornsAmount: slot.thornsAmount,
+    });
+
+    // Lava Shield: orange-red glow; regular shield: blue
+    const color = slot.thornsAmount ? 0xff6600 : 0x4488ff;
+    const colorHex = slot.thornsAmount ? '#ff6600' : '#4488ff';
+    target.sprite.setTint(color);
+    this.scene.time.delayedCall(200, () => { if (target.alive) target.sprite.clearTint(); });
+
+    const label = slot.thornsAmount ? `+${buffAmount} DEF  THORNS` : `+${buffAmount} DEF`;
+    this.showFloatingText(target.sprite.x, target.sprite.y, label, colorHex, 10);
+  }
+
+  /** Rally buff: buff all nearby allies' attack and speed. */
+  private executeRallyBuff(caster: CombatUnit, slot: MoveSlot): void {
+    const duration = slot.duration ?? 4000;
+    const time = this.scene.time.now;
+    const atkBuff = Math.ceil(slot.power * 0.5);
+    const spdBuff = slot.power * 2;
+
+    // Gold pulse ring visual
+    const typeColor = TYPE_COLORS[caster.elementType] ?? 0xffdd44;
+    const ring = this.scene.add.circle(caster.sprite.x, caster.sprite.y, 1, typeColor, 0).setDepth(250);
+    ring.setStrokeStyle(2, typeColor, 0.6);
+    this.scene.tweens.add({
+      targets: ring,
+      scale: { from: 1, to: 60 },
+      alpha: 0,
+      duration: 400,
+      onComplete: () => ring.destroy(),
+    });
+
+    for (const ally of this.allies) {
+      if (!ally.alive) continue;
+      const dx = ally.sprite.x - caster.sprite.x;
+      const dy = ally.sprite.y - caster.sprite.y;
+      if (Math.sqrt(dx * dx + dy * dy) > 60) continue;
+
+      this.applyStatusEffect(ally, { id: 'rally_atk', stat: 'attack', amount: atkBuff, expiresAt: time + duration });
+      this.applyStatusEffect(ally, { id: 'rally_spd', stat: 'speed', amount: spdBuff, expiresAt: time + duration });
+
+      this.showFloatingText(ally.sprite.x, ally.sprite.y, '+ATK +SPD', '#ffdd44', 9);
+    }
+  }
+
+  /** Slow: strike damage + speed debuff on target. */
+  private executeSlow(attacker: CombatUnit, defender: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
+    const variance = Math.floor(Math.random() * 4) - 2;
+    const damage = Math.max(1, slot.power + variance);
+    const label = isAlly ? `${slot.name} -${damage}` : `-${damage}`;
+    const duration = slot.duration ?? 3000;
+
+    const onHit = () => {
+      if (!defender.alive) return;
+
+      if (slot.rootTarget) {
+        // Full root: speed → 0, attacks locked (Root Snap)
+        this.applyRoot(defender, duration);
+      } else {
+        // Partial slow
+        const slowAmount = -Math.floor(defender.speed * 0.4);
+        this.applyStatusEffect(defender, {
+          id: 'slow',
+          stat: 'speed',
+          amount: slowAmount,
+          expiresAt: this.scene.time.now + duration,
+        });
+        defender.sprite.setTint(0x44cccc);
+        this.scene.time.delayedCall(200, () => { if (defender.alive) defender.sprite.clearTint(); });
+        this.showFloatingText(defender.sprite.x, defender.sprite.y, 'SLOWED', '#44cccc', 9);
+        if (slot.appliesBlind) this.applyBlind(defender, slot.appliesBlind, slot.blindDuration ?? 2000);
+        if (slot.appliesBriar) this.applyBriar(defender, slot.appliesBriar, slot.briarDuration ?? 4000);
+      }
+    };
+
+    // Cyan projectile for slow
+    this.fireProjectileOrMelee(attacker, defender, damage, isAlly, label, slot.isSignature, false,
+      onHit, undefined, 0x44cccc, 1, 0x44cccc);
+  }
+
+  /** Taunt: force nearby enemies to target this unit. */
+  private executeTaunt(caster: CombatUnit, slot: MoveSlot): void {
+    const duration = slot.duration ?? 4000;
+    const time = this.scene.time.now;
+
+    // Red pulse ring
+    const ring = this.scene.add.circle(caster.sprite.x, caster.sprite.y, 1, 0xff4444, 0).setDepth(250);
+    ring.setStrokeStyle(2, 0xff4444, 0.6);
+    this.scene.tweens.add({
+      targets: ring,
+      scale: { from: 1, to: 50 },
+      alpha: 0,
+      duration: 400,
+      onComplete: () => ring.destroy(),
+    });
+
+    let taunted = 0;
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) continue;
+      const dx = enemy.sprite.x - caster.sprite.x;
+      const dy = enemy.sprite.y - caster.sprite.y;
+      if (Math.sqrt(dx * dx + dy * dy) > 50) continue;
+
+      enemy.forcedTarget = caster;
+      enemy.forcedTargetExpiry = time + duration;
+      taunted++;
+
+      this.showFloatingText(enemy.sprite.x, enemy.sprite.y, 'TAUNT', '#ff6644', 9);
+    }
+
+    if (taunted > 0) {
+      caster.sprite.setTint(0xff6644);
+      this.scene.time.delayedCall(200, () => {
+        if (caster.alive) caster.sprite.clearTint();
+      });
+    }
+
+    // Self-buff while taunting (Shell Guard / Stone Bash defense boost etc.)
+    this.applySelfBuffFromSlot(caster, slot);
+
+    // Knockback immunity for the taunt duration (Stone Bash)
+    if (slot.grantsKnockbackImmunity) {
+      caster.knockbackImmuneUntil = this.scene.time.now + (slot.duration ?? 4000);
+    }
+
+    // Damage reduction for a shorter window (Iron Curl)
+    if (slot.grantsDamageReduction) {
+      caster.damageReductionAmount = slot.grantsDamageReduction;
+      caster.damageReductionUntil = this.scene.time.now + (slot.damageReductionDuration ?? 3000);
+      const pct = Math.round(slot.grantsDamageReduction * 100);
+      this.showFloatingText(caster.sprite.x, caster.sprite.y, `${pct}% DMG BLOCK`, '#aaaaaa', 9);
+      caster.sprite.setTint(0xaaaaaa);
+      this.scene.time.delayedCall(200, () => { if (caster.alive) caster.sprite.clearTint(); });
+    }
+  }
+
+  /** Helper: fire a projectile if ranged, or apply melee hit immediately. */
+  private fireProjectileOrMelee(
+    attacker: CombatUnit, defender: CombatUnit, damage: number,
+    isAlly: boolean, label: string, isSignature: boolean,
+    pierce = false, onHitCallback?: () => void, projRadius?: number,
+    projColorOverride?: number, speedMult = 1, impactColor?: number,
+  ): void {
+    const aDist = Phaser.Math.Distance.Between(attacker.sprite.x, attacker.sprite.y, defender.sprite.x, defender.sprite.y);
+
+    const defaultColor = isAlly ? (TYPE_COLORS[attacker.elementType] ?? 0xffcc44) : 0xff4444;
+    const projColor = projColorOverride ?? defaultColor;
+    const hitColor = impactColor ?? projColor;
+
+    if (aDist > 40) {
+      const radius = projRadius ?? (isSignature ? 5 : 3);
+      const proj = this.scene.add.circle(attacker.sprite.x, attacker.sprite.y, radius, projColor).setDepth(250);
+
+      // Pierce projectiles leave a fading trail
+      if (pierce) {
+        proj.setAlpha(0.9);
+        const trail = this.scene.time.addEvent({
+          delay: 30,
+          repeat: 6,
+          callback: () => {
+            const dot = this.scene.add.circle(proj.x, proj.y, 1.5, projColor, 0.4).setDepth(249);
+            this.scene.tweens.add({ targets: dot, alpha: 0, duration: 150, onComplete: () => dot.destroy() });
+          },
+        });
+        // Store for cleanup
+        proj.setData('trail', trail);
+      }
+
+      this.scene.tweens.add({
+        targets: proj,
+        x: defender.sprite.x,
+        y: defender.sprite.y,
+        duration: Math.min(200, aDist * 2) * speedMult,
+        onComplete: () => {
+          const trailEvent = proj.getData('trail') as Phaser.Time.TimerEvent | undefined;
+          if (trailEvent) trailEvent.destroy();
+          proj.destroy();
+          this.spawnImpactFlash(defender.sprite.x, defender.sprite.y, hitColor, isSignature);
+          this.applyHit(attacker, defender, damage, isAlly, label, pierce);
+          onHitCallback?.();
+        },
+      });
+      return;
+    }
+
+    // Melee: show impact flash at defender
+    this.spawnImpactFlash(defender.sprite.x, defender.sprite.y, hitColor, isSignature);
+    this.applyHit(attacker, defender, damage, isAlly, label, pierce);
+    onHitCallback?.();
+  }
+
+  /** Brief expanding circle at impact point + scattered spark dots. */
+  private spawnImpactFlash(x: number, y: number, color: number, large = false): void {
+    const size = large ? 8 : 5;
+    const flash = this.scene.add.circle(x, y, size, color, 0.5).setDepth(260);
+    this.scene.tweens.add({
+      targets: flash,
+      scale: { from: 1, to: 2 },
+      alpha: 0,
+      duration: 150,
+      onComplete: () => flash.destroy(),
+    });
+
+    // Hit spark scatter — 3-4 small dots fly outward and fade
+    const sparkCount = large ? 5 : 3;
+    for (let i = 0; i < sparkCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 18 + Math.random() * 22;
+      const spark = this.scene.add.circle(x, y, 2, color, 0.8).setDepth(259);
+      this.scene.tweens.add({
+        targets: spark,
+        x: x + Math.cos(angle) * speed,
+        y: y + Math.sin(angle) * speed,
+        alpha: 0,
+        duration: 180 + Math.random() * 80,
+        ease: 'Cubic.Out',
+        onComplete: () => spark.destroy(),
+      });
+    }
+  }
+
+  /** Helper: show floating text that drifts up and fades. */
+  private showFloatingText(x: number, y: number, text: string, color: string, fontSize: number): void {
+    const xJitter = (Math.random() - 0.5) * 24;
+    const t = this.scene.add
+      .text(x + xJitter, y - 20, text, {
+        fontFamily: 'monospace',
+        fontSize: `${fontSize}px`,
+        color,
+        stroke: '#000000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5)
+      .setDepth(300);
+    this.scene.tweens.add({
+      targets: t,
+      y: t.y - 16,
+      alpha: 0,
+      duration: 600,
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  /** Shared hit application: evasion check, defense reduction, crit, flash, knockback, damage number, kill check. */
+  private applyHit(attacker: CombatUnit, defender: CombatUnit, baseDamage: number, isAllyAttacker: boolean, label: string, pierce = false): void {
+    // Phase immunity — defender cannot be hit while phasing
+    if (this.scene.time.now < defender.phaseUntil) return;
+
+    // Blind check: attacker may miss regardless of target evasion
+    if (attacker.blindMissChance > 0 && Math.random() * 100 < attacker.blindMissChance) {
+      this.showFloatingText(attacker.sprite.x, attacker.sprite.y, 'MISS', '#ffffaa', 9);
+      return;
+    }
+
+    // Evasion check
+    if (defender.evasion > 0 && Math.random() * 100 < defender.evasion) {
+      const xJitter = (Math.random() - 0.5) * 24;
+      const missText = this.scene.add
+        .text(defender.sprite.x + xJitter, defender.sprite.y - 20, 'MISS', {
+          fontFamily: 'monospace',
+          fontSize: '9px',
+          color: '#aaaaaa',
+          stroke: '#000000',
+          strokeThickness: 2,
+        })
+        .setOrigin(0.5)
+        .setDepth(300);
+      this.scene.tweens.add({
+        targets: missText,
+        y: missText.y - 16,
+        alpha: 0,
+        duration: 600,
+        onComplete: () => missText.destroy(),
+      });
+      return;
+    }
+
+    // Defense reduction (minimum 1 damage) — pierce ignores defense
+    let damage = pierce ? Math.max(1, baseDamage) : Math.max(1, baseDamage - defender.defense);
+
+    // Critical hit check
+    let isCrit = false;
+    if (attacker.critRate > 0 && Math.random() * 100 < attacker.critRate) {
+      damage = Math.floor(damage * 1.5);
+      isCrit = true;
+    }
+
+    // Damage reduction (Iron Curl)
+    if (defender.damageReductionAmount > 0 && this.scene.time.now < defender.damageReductionUntil) {
+      damage = Math.max(1, Math.floor(damage * (1 - defender.damageReductionAmount)));
+    }
+
+    // Hunter's Mark amplification — all sources deal bonus damage to marked targets
+    if (defender.markedDamageBonus > 0 && this.scene.time.now < defender.markedUntil) {
+      damage = Math.max(1, Math.floor(damage * (1 + defender.markedDamageBonus)));
+    }
+
+    defender.hp = Math.max(0, defender.hp - damage);
+
+    // Flash red (crits flash orange)
+    defender.sprite.setTint(isCrit ? 0xff8800 : 0xff4444);
+    this.scene.time.delayedCall(120, () => {
+      if (defender.alive) defender.sprite.clearTint();
+    });
+
+    // Attacker confirmation flash — brief element-color tint so the hit feels responsive
+    const attackerColor = TYPE_COLORS[attacker.elementType] ?? 0xffffff;
+    attacker.sprite.setTint(attackerColor);
+    this.scene.time.delayedCall(80, () => { if (attacker.alive) attacker.sprite.clearTint(); });
+
+    // Thorns: if defender has an active shield with thorns, reflect damage back
+    const thornsEffect = defender.statusEffects.find((e) => e.thornsAmount && e.thornsAmount > 0);
+    if (thornsEffect && attacker.alive) {
+      const thornsDmg = thornsEffect.thornsAmount!;
+      attacker.hp = Math.max(0, attacker.hp - thornsDmg);
+      this.showFloatingText(attacker.sprite.x, attacker.sprite.y, `-${thornsDmg}`, '#ff6600', 9);
+      attacker.sprite.setTint(0xff6600);
+      this.scene.time.delayedCall(80, () => { if (attacker.alive) attacker.sprite.clearTint(); });
+      if (attacker.hp <= 0) this.killUnit(attacker);
+    }
+
+    // Briar: attacker takes damage for attacking while briar'd
+    if (attacker.briarDamage > 0 && this.scene.time.now < attacker.briarExpiresAt && attacker.alive) {
+      attacker.hp = Math.max(0, attacker.hp - attacker.briarDamage);
+      this.showFloatingText(attacker.sprite.x, attacker.sprite.y, `-${attacker.briarDamage}`, '#44cc44', 9);
+      attacker.sprite.setTint(0x44cc44);
+      this.scene.time.delayedCall(80, () => { if (attacker.alive) attacker.sprite.clearTint(); });
+      if (attacker.hp <= 0) this.killUnit(attacker);
+    }
+
+    // Knockback (crits knock back harder) — skipped if defender is knockback immune
+    if (this.scene.time.now >= defender.knockbackImmuneUntil) {
+      const dx = defender.sprite.x - attacker.sprite.x;
+      const dy = defender.sprite.y - attacker.sprite.y;
+      const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const knockForce = isCrit ? 50 : 30;
+      defender.sprite.setVelocity((dx / dist) * knockForce, (dy / dist) * knockForce);
+      this.scene.time.delayedCall(100, () => {
+        if (defender.alive) defender.sprite.setVelocity(0, 0);
+      });
+    }
+
+    // Damage number — offset randomly to avoid stacking
+    const isAllyDefender = this.allies.includes(defender);
+    const xJitter = (Math.random() - 0.5) * 24;
+    const critPrefix = isCrit ? 'CRIT! ' : '';
+    const displayLabel = `${critPrefix}${label.replace(/-\d+/, `-${damage}`)}`;
+    const dmgColor = isCrit ? '#ff8800' : isAllyAttacker ? '#ffcc44' : '#ff4444';
+    const dmgText = this.scene.add
+      .text(defender.sprite.x + xJitter, defender.sprite.y - 20, displayLabel, {
+        fontFamily: 'monospace',
+        fontSize: isCrit ? '12px' : isAllyDefender && !isAllyAttacker ? '11px' : '10px',
+        color: dmgColor,
+        stroke: '#000000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5)
+      .setDepth(300);
+
+    this.scene.tweens.add({
+      targets: dmgText,
+      y: dmgText.y - 16,
+      alpha: 0,
+      duration: 600,
+      onComplete: () => dmgText.destroy(),
+    });
+
+    if (defender.hp <= 0) {
+      this.killUnit(defender);
+    }
+  }
+
+  // --- Selection API (for CombatHUD) ---
+
+  get selectedAllyIndex(): number {
+    return this._selectedAllyIndex;
+  }
+
+  get allyCount(): number {
+    return this.allies.length;
+  }
+
+  cycleSelection(dir: 1 | -1): void {
+    if (this.allies.length === 0) return;
+    // Find next alive ally in the given direction
+    let idx = this._selectedAllyIndex;
+    for (let i = 0; i < this.allies.length; i++) {
+      idx = (idx + dir + this.allies.length) % this.allies.length;
+      if (this.allies[idx].alive) {
+        this._selectedAllyIndex = idx;
+        return;
+      }
+    }
+  }
+
+  selectAllyBySprite(sprite: Phaser.Physics.Arcade.Sprite): boolean {
+    for (let i = 0; i < this.allies.length; i++) {
+      if (this.allies[i].sprite === sprite && this.allies[i].alive) {
+        this._selectedAllyIndex = i;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  getSelectedAlly(): CombatUnit | null {
+    const ally = this.allies[this._selectedAllyIndex];
+    return ally?.alive ? ally : null;
+  }
+
+  getAlly(index: number): CombatUnit | null {
+    return this.allies[index] ?? null;
+  }
+
+  /** Get cooldown progress (0 = ready, 1 = just used) for a move slot on the selected ally. */
+  getMoveCooldownRatio(allyIndex: number, slotIndex: number, time: number): number {
+    const ally = this.allies[allyIndex];
+    if (!ally?.moveSlots?.[slotIndex]) return 0;
+    const slot = ally.moveSlots[slotIndex];
+    const elapsed = time - slot.lastUsedTime;
+    if (elapsed >= slot.cooldownMs) return 0;
+    return 1 - elapsed / slot.cooldownMs;
+  }
+
+  // --- Player Command API ---
+
+  /**
+   * Focus Target — mark an enemy so all allies prioritize it.
+   * Pass null to clear.
+   */
+  setFocusTarget(worldX: number, worldY: number): boolean {
+    if (!this.active) return false;
+    let bestDist = 30;
+    let best: CombatUnit | null = null;
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) continue;
+      const dx = enemy.sprite.x - worldX;
+      const dy = enemy.sprite.y - worldY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = enemy;
+      }
+    }
+    this._focusTarget = best;
+    this.updateFocusRing();
+    return best !== null;
+  }
+
+  clearFocusTarget(): void {
+    this._focusTarget = null;
+    this.updateFocusRing();
+  }
+
+  get focusTarget(): CombatUnit | null {
+    return this._focusTarget;
+  }
+
+  private updateFocusRing(): void {
+    this.focusRing?.destroy();
+    this.focusRing = undefined;
+    if (!this._focusTarget?.alive) return;
+    this.focusRing = this.scene.add.graphics().setDepth(199);
+  }
+
+  private drawFocusRing(): void {
+    if (!this.focusRing || !this._focusTarget?.alive) {
+      this.focusRing?.destroy();
+      this.focusRing = undefined;
+      this._focusTarget = null;
+      return;
+    }
+    this.focusRing.clear();
+    const t = this._focusTarget;
+    this.focusRing.lineStyle(1.5, 0xff4444, 0.9);
+    this.focusRing.strokeCircle(t.sprite.x, t.sprite.y, 14);
+    // Pulsing inner ring
+    const pulse = 0.5 + 0.5 * Math.sin(this.scene.time.now * 0.006);
+    this.focusRing.lineStyle(1, 0xff6666, pulse * 0.6);
+    this.focusRing.strokeCircle(t.sprite.x, t.sprite.y, 17);
+  }
+
+  /**
+   * Rally — all allies sprint to the trainer and hold close.
+   */
+  rally(time: number): void {
+    if (!this.active || this._rallyActive) return;
+    this._rallyActive = true;
+    this._rallyEndTime = time + CombatManager.RALLY_DURATION;
+    // Clear any individual repositions
+    this.clearAllRepositions();
+  }
+
+  get rallyActive(): boolean {
+    return this._rallyActive;
+  }
+
+  /**
+   * Reposition — send the selected ally to a specific point.
+   */
+  repositionSelected(worldX: number, worldY: number, time: number): boolean {
+    if (!this.active) return false;
+    const ally = this.getSelectedAlly();
+    if (!ally) return false;
+
+    // Clear rally if repositioning individually
+    this._rallyActive = false;
+
+    this.repositionTargets.set(ally, {
+      x: worldX,
+      y: worldY,
+      resumeTime: time + CombatManager.REPOSITION_HOLD,
+    });
+
+    // Create waypoint marker
+    let marker = this.repositionMarkers.get(ally);
+    if (!marker) {
+      marker = this.scene.add.graphics().setDepth(198);
+      this.repositionMarkers.set(ally, marker);
+    }
+    return true;
+  }
+
+  private drawRepositionMarkers(): void {
+    for (const [ally, target] of this.repositionTargets) {
+      const marker = this.repositionMarkers.get(ally);
+      if (!marker) continue;
+      marker.clear();
+      if (!ally.alive) {
+        this.repositionTargets.delete(ally);
+        marker.destroy();
+        this.repositionMarkers.delete(ally);
+        continue;
+      }
+      // Small diamond marker at the target point
+      const { x, y } = target;
+      const isSelected = this.allies[this._selectedAllyIndex] === ally;
+      const color = isSelected ? 0x44aaff : 0x3388cc;
+      const alpha = 0.4 + 0.3 * Math.sin(this.scene.time.now * 0.005);
+      marker.lineStyle(1, color, alpha);
+      marker.strokeCircle(x, y, 6);
+      marker.fillStyle(color, alpha * 0.3);
+      marker.fillCircle(x, y, 6);
+    }
+  }
+
+  private clearAllRepositions(): void {
+    for (const marker of this.repositionMarkers.values()) marker.destroy();
+    this.repositionMarkers.clear();
+    this.repositionTargets.clear();
+  }
+
+  /**
+   * Unleash — all allies fire their signature move simultaneously.
+   * Returns false if still on cooldown.
+   */
+  unleash(time: number): boolean {
+    if (!this.active) return false;
+    if (time < this._unleashReadyTime) return false;
+
+    this._unleashReadyTime = time + CombatManager.UNLEASH_COOLDOWN;
+    this._rallyActive = false;
+
+    for (const ally of this.allies) {
+      if (!ally.alive || !ally.moveSlots) continue;
+      // Find the signature move
+      const sigIdx = ally.moveSlots.findIndex((s) => s.isSignature);
+      if (sigIdx < 0) continue;
+      const slot = ally.moveSlots[sigIdx];
+
+      // Find nearest enemy target
+      let nearest: CombatUnit | null = null;
+      let nearestDist = Infinity;
+      for (const enemy of this.enemies) {
+        if (!enemy.alive) continue;
+        const dx = enemy.sprite.x - ally.sprite.x;
+        const dy = enemy.sprite.y - ally.sprite.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = enemy;
+        }
+      }
+      if (!nearest) continue;
+
+      const target = this.pickMoveTarget(ally, slot, nearest, time);
+      if (!target) continue;
+
+      // Fire the signature move, bypassing its normal cooldown
+      slot.lastUsedTime = time;
+      ally.lastMoveIndex = sigIdx;
+      this.dealMoveDamage(ally, target, slot);
+    }
+
+    // Camera flash for team ultimate
+    this.scene.cameras.main.flash(200, 255, 220, 100);
+    return true;
+  }
+
+  /** Unleash cooldown ratio (0 = ready, 1 = just used). */
+  getUnleashCooldownRatio(time: number): number {
+    if (time >= this._unleashReadyTime) return 0;
+    const remaining = this._unleashReadyTime - time;
+    return remaining / CombatManager.UNLEASH_COOLDOWN;
+  }
+
+  /**
+   * Compute ally formation — spread out slightly from their current positions
+   * on the player's side of the room.
+   */
+  private computeAllyFormation(
+    companions: CompanionEntry[],
+    roomW: number,
+    roomH: number,
+    entrySide: 'north' | 'south' | 'east' | 'west',
+  ): { x: number; y: number }[] {
+    const count = companions.length;
+    const spacing = 32;
+    const margin = 32; // keep away from walls
+
+    // Determine the center point on the player's side
+    let baseX: number, baseY: number;
+    switch (entrySide) {
+      case 'south':
+        baseX = roomW / 2;
+        baseY = roomH * 0.75;
+        break;
+      case 'north':
+        baseX = roomW / 2;
+        baseY = roomH * 0.25;
+        break;
+      case 'west':
+        baseX = roomW * 0.25;
+        baseY = roomH / 2;
+        break;
+      case 'east':
+        baseX = roomW * 0.75;
+        baseY = roomH / 2;
+        break;
+    }
+
+    const targets: { x: number; y: number }[] = [];
+    const isHorizontalSplit = entrySide === 'north' || entrySide === 'south';
+
+    if (isHorizontalSplit) {
+      // Spread allies horizontally
+      const totalWidth = (count - 1) * spacing;
+      const startX = baseX - totalWidth / 2;
+      for (let i = 0; i < count; i++) {
+        targets.push({
+          x: Math.max(margin, Math.min(roomW - margin, startX + i * spacing)),
+          y: baseY,
+        });
+      }
+    } else {
+      // Spread allies vertically
+      const totalHeight = (count - 1) * spacing;
+      const startY = baseY - totalHeight / 2;
+      for (let i = 0; i < count; i++) {
+        targets.push({
+          x: baseX,
+          y: Math.max(margin, Math.min(roomH - margin, startY + i * spacing)),
+        });
+      }
+    }
+    return targets;
+  }
+
+  /**
+   * Scatter enemies randomly across the far half of the room (opposite the entry side).
+   */
+  private computeEnemyScatter(
+    count: number,
+    roomW: number,
+    roomH: number,
+    entrySide: 'north' | 'south' | 'east' | 'west',
+  ): { x: number; y: number }[] {
+    const margin = 32;
+    // Define the enemy half bounds
+    let minX: number, maxX: number, minY: number, maxY: number;
+    switch (entrySide) {
+      case 'south': // enemies in top half
+        minX = margin; maxX = roomW - margin;
+        minY = margin; maxY = roomH * 0.45;
+        break;
+      case 'north': // enemies in bottom half
+        minX = margin; maxX = roomW - margin;
+        minY = roomH * 0.55; maxY = roomH - margin;
+        break;
+      case 'west': // enemies in right half
+        minX = roomW * 0.55; maxX = roomW - margin;
+        minY = margin; maxY = roomH - margin;
+        break;
+      case 'east': // enemies in left half
+        minX = margin; maxX = roomW * 0.45;
+        minY = margin; maxY = roomH - margin;
+        break;
+    }
+
+    const targets: { x: number; y: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      targets.push({
+        x: minX + Math.random() * (maxX - minX),
+        y: minY + Math.random() * (maxY - minY),
+      });
+    }
+    return targets;
+  }
+
+  /**
+   * Setup phase tick: both sides walk to formation positions.
+   * Transitions to live combat when everyone arrives or timeout expires.
+   */
+  private updateSetupPhase(time: number): void {
+    const alliesReady = this.walkUnitsToTargets(this.allies, this.formationTargets);
+    const enemiesReady = this.walkUnitsToTargets(this.enemies, this.enemyFormationTargets);
+
+    const elapsed = time - this.setupStartTime;
+    if ((alliesReady && enemiesReady) || elapsed >= SETUP_TIMEOUT_MS) {
+      this.beginCombat();
+    }
+  }
+
+  /** Walk a set of units toward their target positions. Returns true if all have arrived. */
+  private walkUnitsToTargets(units: CombatUnit[], targets: { x: number; y: number }[]): boolean {
+    let allArrived = true;
+    for (let i = 0; i < units.length; i++) {
+      const unit = units[i];
+      if (!unit.alive) continue;
+      const target = targets[i];
+      if (!target) continue;
+
+      const dx = target.x - unit.sprite.x;
+      const dy = target.y - unit.sprite.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > SETUP_ARRIVE_DIST) {
+        allArrived = false;
+        const vx = (dx / dist) * SETUP_WALK_SPEED;
+        const vy = (dy / dist) * SETUP_WALK_SPEED;
+        unit.sprite.setVelocity(vx, vy);
+        const dir = this.getDirection(vx, vy);
+        this.unitLastDir.set(unit, dir);
+        playWalkOrStatic(unit.sprite, unit.texturePrefix, dir, this.scene.anims);
+      } else {
+        unit.sprite.setVelocity(0, 0);
+        stopWalkAnim(unit.sprite, unit.texturePrefix, this.unitLastDir.get(unit) ?? 'south');
+      }
+    }
+    return allArrived;
+  }
+
+  /**
+   * Transition from setup phase to live combat with a "FIGHT!" flash.
+   */
+  private beginCombat(): void {
+    this.setupPhase = false;
+    for (const ally of this.allies) {
+      if (ally.alive) ally.sprite.setVelocity(0, 0);
+    }
+    for (const enemy of this.enemies) {
+      if (enemy.alive) enemy.sprite.setVelocity(0, 0);
+    }
+
+    // "FIGHT!" text
+    const cam = this.scene.cameras.main;
+    const fightText = this.scene.add
+      .text(cam.scrollX + cam.width / 2, cam.scrollY + cam.height / 2, 'FIGHT!', {
+        fontFamily: 'monospace',
+        fontSize: '24px',
+        color: '#ffcc44',
+        stroke: '#000000',
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setDepth(500)
+      .setScrollFactor(0);
+
+    this.scene.tweens.add({
+      targets: fightText,
+      alpha: 0,
+      scale: 2,
+      duration: 800,
+      onComplete: () => fightText.destroy(),
+    });
+  }
+
+  /**
+   * Compute a separation velocity offset so same-team units don't overlap.
+   * Returns {vx, vy} to add to the unit's current velocity.
+   */
+  private getSeparation(unit: CombatUnit, team: CombatUnit[]): { vx: number; vy: number } {
+    let pushX = 0;
+    let pushY = 0;
+    for (const other of team) {
+      if (other === unit || !other.alive) continue;
+      const dx = unit.sprite.x - other.sprite.x;
+      const dy = unit.sprite.y - other.sprite.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < SEPARATION_RADIUS && dist > 0.1) {
+        // Stronger push the closer they are
+        const strength = (SEPARATION_RADIUS - dist) / SEPARATION_RADIUS;
+        pushX += (dx / dist) * SEPARATION_FORCE * strength;
+        pushY += (dy / dist) * SEPARATION_FORCE * strength;
+      } else if (dist <= 0.1) {
+        // Exactly overlapping — push in a random direction
+        const angle = Math.random() * Math.PI * 2;
+        pushX += Math.cos(angle) * SEPARATION_FORCE;
+        pushY += Math.sin(angle) * SEPARATION_FORCE;
+      }
+    }
+    return { vx: pushX, vy: pushY };
+  }
+
+  private drawHpBar(unit: CombatUnit, isAlly: boolean): void {
+    const gfx = unit.hpBar;
+    gfx.clear();
+    if (!unit.alive) return;
+
+    const x = unit.sprite.x - HP_BAR_WIDTH / 2;
+    const y = unit.sprite.y + HP_BAR_OFFSET_Y;
+    const ratio = unit.hp / unit.maxHp;
+
+    // Border tint distinguishes friend (dark) from foe (red-tinted)
+    gfx.fillStyle(isAlly ? 0x000000 : 0x661111, isAlly ? 0.6 : 0.85);
+    gfx.fillRect(x - 1, y - 1, HP_BAR_WIDTH + 2, HP_BAR_HEIGHT + 2);
+
+    // Allies: ratio-based color (green → yellow → red HP warning).
+    // Enemies: always solid threat-red so they're unambiguous at a glance.
+    const color = isAlly
+      ? (ratio > 0.5 ? 0x44cc44 : ratio > 0.25 ? 0xccaa22 : 0xcc3333)
+      : 0xcc3333;
+    gfx.fillStyle(color);
+    gfx.fillRect(x, y, HP_BAR_WIDTH * ratio, HP_BAR_HEIGHT);
+
+    // Ignite indicator — pulsing orange dot above the HP bar, sized by stack count
+    if (unit.igniteStacks > 0) {
+      const pulse = 0.55 + 0.45 * Math.sin(this.scene.time.now * 0.008);
+      const dotRadius = Math.min(1 + unit.igniteStacks * 0.25, 4);
+      gfx.fillStyle(0xff6600, pulse);
+      gfx.fillCircle(unit.sprite.x - 5, y - 4, dotRadius);
+    }
+
+    // Blind indicator — pulsing white-yellow dot
+    if (unit.blindMissChance > 0) {
+      const pulse = 0.55 + 0.45 * Math.sin(this.scene.time.now * 0.008 + 1.5);
+      gfx.fillStyle(0xffffcc, pulse);
+      gfx.fillCircle(unit.sprite.x + 5, y - 4, 2.5);
+    }
+
+    // Briar indicator — pulsing green dot
+    if (unit.briarDamage > 0 && this.scene.time.now < unit.briarExpiresAt) {
+      const pulse = 0.55 + 0.45 * Math.sin(this.scene.time.now * 0.008 + 3.0);
+      gfx.fillStyle(0x44cc44, pulse);
+      gfx.fillCircle(unit.sprite.x + 13, y - 4, 2.5);
+    }
+
+    // Damage reduction indicator — pulsing grey dot (Iron Curl)
+    if (unit.damageReductionAmount > 0 && this.scene.time.now < unit.damageReductionUntil) {
+      const pulse = 0.55 + 0.45 * Math.sin(this.scene.time.now * 0.008 + 4.5);
+      gfx.fillStyle(0xaaaaaa, pulse);
+      gfx.fillCircle(unit.sprite.x - 13, y - 4, 2.5);
+    }
+
+    // Hunter's Mark indicator — pulsing dark purple dot
+    if (unit.markedDamageBonus > 0 && this.scene.time.now < unit.markedUntil) {
+      const pulse = 0.55 + 0.45 * Math.sin(this.scene.time.now * 0.008 + 6.0);
+      gfx.fillStyle(0x9933cc, pulse);
+      gfx.fillCircle(unit.sprite.x, y - 9, 2.5);
+    }
+  }
+
+  private getDirection(vx: number, vy: number): string {
+    return directionFromVelocity(vx, vy);
+  }
+
+  destroy(): void {
+    if (this.regenTimer) {
+      this.regenTimer.destroy();
+      this.regenTimer = undefined;
+    }
+    for (const enemy of this.enemies) {
+      if (enemy.alive) {
+        enemy.sprite.destroy();
+      }
+      enemy.hpBar.destroy();
+    }
+    this.enemies = [];
+    for (const ally of this.allies) {
+      ally.hpBar.destroy();
+    }
+    this.allies = [];
+    this.active = false;
+  }
+}
