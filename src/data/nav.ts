@@ -35,9 +35,11 @@ const DIRS_8 = [
 
 export class SimpleNav {
   private readonly walkable: boolean[][];
+  private readonly clearance: boolean[][];
   private readonly W: number;
   private readonly H: number;
   private readonly T: number;
+  private readonly inflate: number;
 
   /**
    * @param tiles  Resolved tile grid (0=void, 1=floor, 2=wall, 3=door, 4=water)
@@ -46,8 +48,17 @@ export class SimpleNav {
    *   unwalkable in addition to wall/void tiles. Used to route paths around
    *   decoration collision bodies (trees, logs, etc.) that aren't part of
    *   the base tile grid.
+   * @param clearanceRadius  Pixel radius of the moving unit. Obstacles are
+   *   dilated by `ceil(radius / tileSize)` tiles so the pathfinder won't plan
+   *   routes where the unit's body would clip walls or decorations. Pass 0 to
+   *   disable dilation.
    */
-  constructor(tiles: number[][], tileSize: number, extraBlocked?: Set<number>) {
+  constructor(
+    tiles: number[][],
+    tileSize: number,
+    extraBlocked?: Set<number>,
+    clearanceRadius = 0,
+  ) {
     this.T = tileSize;
     this.H = tiles.length;
     this.W = tiles[0]?.length ?? 0;
@@ -61,6 +72,34 @@ export class SimpleNav {
         }
       }
     }
+    this.inflate = clearanceRadius > 0 ? Math.ceil(clearanceRadius / tileSize) : 0;
+    this.clearance = this.buildClearance();
+  }
+
+  private buildClearance(): boolean[][] {
+    if (this.inflate <= 0) return this.walkable.map(row => row.slice());
+    const out: boolean[][] = [];
+    for (let y = 0; y < this.H; y++) {
+      const row: boolean[] = [];
+      for (let x = 0; x < this.W; x++) {
+        let clear = this.walkable[y][x];
+        if (clear) {
+          outer: for (let dy = -this.inflate; dy <= this.inflate; dy++) {
+            for (let dx = -this.inflate; dx <= this.inflate; dx++) {
+              const nx = x + dx;
+              const ny = y + dy;
+              if (nx < 0 || ny < 0 || nx >= this.W || ny >= this.H || !this.walkable[ny][nx]) {
+                clear = false;
+                break outer;
+              }
+            }
+          }
+        }
+        row.push(clear);
+      }
+      out.push(row);
+    }
+    return out;
   }
 
   /**
@@ -70,6 +109,16 @@ export class SimpleNav {
   blockTile(tx: number, ty: number): void {
     if (tx >= 0 && ty >= 0 && tx < this.W && ty < this.H) {
       this.walkable[ty][tx] = false;
+      const r = this.inflate;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const nx = tx + dx;
+          const ny = ty + dy;
+          if (nx >= 0 && ny >= 0 && nx < this.W && ny < this.H) {
+            this.clearance[ny][nx] = false;
+          }
+        }
+      }
     }
   }
 
@@ -78,12 +127,29 @@ export class SimpleNav {
     return this.los(x0, y0, x1, y1);
   }
 
+  /**
+   * Resolve a world-space point to the nearest clearance-walkable tile center.
+   * Used to sanitize spawn and leap-landing positions so nothing ends up inside
+   * a wall or behind a decoration collider. Returns the input point if it is
+   * already walkable, or the original point unchanged if no clear tile exists.
+   */
+  snapToWalkable(wx: number, wy: number): NavPoint {
+    const tx = Math.floor(wx / this.T);
+    const ty = Math.floor(wy / this.T);
+    if (this.ok(tx, ty)) return { x: wx, y: wy };
+    const near = this.nearestClear(tx, ty);
+    if (!near) return { x: wx, y: wy };
+    return this.center(near.tx, near.ty);
+  }
+
   /** Public walkability check at a world-space point. Returns false for
-   *  out-of-bounds coords (unlike tileOf, which clamps to the border). */
+   *  out-of-bounds coords (unlike tileOf, which clamps to the border).
+   *  Uses the raw walkable grid (not the clearance-dilated one) — this is a
+   *  "can a unit occupy this tile at all" check, not "can a path route here". */
   isWalkableAt(wx: number, wy: number): boolean {
     const tx = Math.floor(wx / this.T);
     const ty = Math.floor(wy / this.T);
-    return this.ok(tx, ty);
+    return tx >= 0 && ty >= 0 && tx < this.W && ty < this.H && this.walkable[ty][tx];
   }
 
   // ─── Public API ────────────────────────────────────────────────────────────
@@ -94,10 +160,17 @@ export class SimpleNav {
    * Falls back to a single direct waypoint if no tile path exists.
    */
   findPath(sx: number, sy: number, gx: number, gy: number): NavPoint[] {
-    const s = this.tileOf(sx, sy);
-    const g = this.tileOf(gx, gy);
+    const s0 = this.tileOf(sx, sy);
+    const g0 = this.tileOf(gx, gy);
 
-    if (s.tx === g.tx && s.ty === g.ty) return [];
+    // If start or goal sits inside a dilated-obstacle cell, escape to the
+    // nearest clearance-walkable tile. Without this, a unit touching a wall
+    // or a target standing beside a tree would fail to find any path even
+    // though a valid route exists a tile away.
+    const s = this.ok(s0.tx, s0.ty) ? s0 : (this.nearestClear(s0.tx, s0.ty) ?? s0);
+    const g = this.ok(g0.tx, g0.ty) ? g0 : (this.nearestClear(g0.tx, g0.ty) ?? g0);
+
+    if (s.tx === g.tx && s.ty === g.ty) return [{ x: gx, y: gy }];
 
     const W = this.W;
     const key = (tx: number, ty: number) => ty * W + tx;
@@ -173,7 +246,30 @@ export class SimpleNav {
   }
 
   private ok(tx: number, ty: number): boolean {
-    return tx >= 0 && ty >= 0 && tx < this.W && ty < this.H && this.walkable[ty][tx];
+    return tx >= 0 && ty >= 0 && tx < this.W && ty < this.H && this.clearance[ty][tx];
+  }
+
+  /** BFS on the clearance grid to find the nearest walkable tile. */
+  private nearestClear(tx: number, ty: number): { tx: number; ty: number } | null {
+    if (tx < 0 || ty < 0 || tx >= this.W || ty >= this.H) return null;
+    const W = this.W;
+    const seen = new Set<number>([ty * W + tx]);
+    const q: Array<{ tx: number; ty: number }> = [{ tx, ty }];
+    let head = 0;
+    while (head < q.length) {
+      const cur = q[head++];
+      if (this.ok(cur.tx, cur.ty)) return cur;
+      for (const { dx, dy } of DIRS_8) {
+        const nx = cur.tx + dx;
+        const ny = cur.ty + dy;
+        if (nx < 0 || ny < 0 || nx >= this.W || ny >= this.H) continue;
+        const k = ny * W + nx;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        q.push({ tx: nx, ty: ny });
+      }
+    }
+    return null;
   }
 
   /** Remove redundant waypoints that are in direct LOS from the previous position. */
@@ -211,8 +307,16 @@ export class SimpleNav {
       if (!this.ok(tx, ty)) return false;
       if (tx === ex && ty === ey) return true;
       const e2 = err * 2;
-      if (e2 > -ady) { err -= ady; tx += sx; }
-      if (e2 < adx)  { err += adx; ty += sy; }
+      const stepX = e2 > -ady;
+      const stepY = e2 < adx;
+      if (stepX && stepY) {
+        // Diagonal step — block if either orthogonal neighbor is blocked,
+        // mirroring the BFS corner-cut rule so smoothing can't squeeze a
+        // path through a wall corner.
+        if (!this.ok(tx + sx, ty) || !this.ok(tx, ty + sy)) return false;
+      }
+      if (stepX) { err -= ady; tx += sx; }
+      if (stepY) { err += adx; ty += sy; }
     }
     return false;
   }

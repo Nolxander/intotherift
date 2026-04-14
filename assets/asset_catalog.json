@@ -94,6 +94,55 @@
       "local_path": "assets/objects/tall-grass-wild",
       "imported_at": "2026-04-12T23:12:10.226218+00:00",
       "notes": "Yellow-tipped wild grass tuft for plains biome scatter"
+    },
+    {
+      "registry_key": "badlands_small_rock",
+      "library_asset_id": "15a3f5dc-75b5-4ea6-a041-25f551c1b7c7",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/badlands-small-rock",
+      "imported_at": "2026-04-13T21:47:21.971511+00:00"
+    },
+    {
+      "registry_key": "badlands_rock_cluster",
+      "library_asset_id": "5ac192c2-d0ae-47c7-9e64-9ef5d132b0d7",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/badlands-rock-cluster",
+      "imported_at": "2026-04-13T21:47:23.616280+00:00"
+    },
+    {
+      "registry_key": "badlands_cracked_boulder",
+      "library_asset_id": "bd3371e3-e23e-4503-95c3-c360653048bd",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/badlands-cracked-boulder",
+      "imported_at": "2026-04-13T21:47:25.141749+00:00"
+    },
+    {
+      "registry_key": "rift_crystal_cluster",
+      "library_asset_id": "2bf6d629-e7e4-45cc-96d6-4a977982e049",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/rift-crystal-cluster",
+      "imported_at": "2026-04-14T00:31:35.179220+00:00"
+    },
+    {
+      "registry_key": "rift_crystal_shard",
+      "library_asset_id": "81444282-fde7-47e2-8258-6f2f76048349",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/rift-crystal-shard",
+      "imported_at": "2026-04-14T00:31:35.486375+00:00"
+    },
+    {
+      "registry_key": "rift_crystal_formation",
+      "library_asset_id": "3cc7fff5-b322-4738-be66-34a75467cdaa",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/rift-crystal-formation",
+      "imported_at": "2026-04-14T00:31:35.794442+00:00"
+    },
+    {
+      "registry_key": "rift_crystal_outcrop",
+      "library_asset_id": "341d9f33-96df-4835-99c1-2780e12db357",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/rift-crystal-outcrop",
+      "imported_at": "2026-04-14T00:31:36.107064+00:00"
     }
   ]
 }

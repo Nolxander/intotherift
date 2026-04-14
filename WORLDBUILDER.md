@@ -11,6 +11,7 @@ The rift is dark, muted, and otherworldly. See `GDD/02_Art_and_Audio_Style.md` f
 - Purple rift energy as unifying accent
 - "Recognizable but strange" — familiar biomes with subtly wrong colors
 - All biomes share a common dark green grass base for cohesion
+- **Biomes are environmental, not type-based.** There is no "fire biome" or "dark biome" or "light biome" tied to riftling elemental types. Biomes describe the *place* (jungle, lava flow, crystal cave, badlands), and any riftling type can inhabit any biome. The `dark_` prefix on every biome name refers to the shared rift aesthetic (dark/muted/corrupted), not to the Dark elemental type. When planning new biomes, pick environmental themes — never map a biome one-to-one to a riftling type.
 
 ## Style Anchor Tileset
 
@@ -210,13 +211,59 @@ The direct-load path calls `generateTestDungeon()` (single-room dungeon, pre-cle
 | Notes | Lava renders via tile type 2 (wall) — impassable hazard that visually flows below the stone floor, like a river. Saturated lava provides the first warm element in the rift palette; purple-infused stone keeps it cohesive. |
 | Renderer special case | `DungeonScene.renderBiomeTile` has a dark_lava-specific code path (`isDarkLavaEdgeWall`). Perimeter tile-2 walls render as `dark_grass_cliff_15` (dark stone cliff) instead of lava, and wang computation treats them as lower terrain, so the room boundary reads as a stone cliff wall rather than a cage of lava. Interior lava pools are unaffected. If you build another biome where wang_15 is a hazard rather than a natural wall (e.g. acid, void), you'll need similar handling. |
 
+### dark_badlands
+| Field | Value |
+|---|---|
+| PixelLab ID | `aa1e135f-c9c4-4c3c-a63c-7fdf1fe2aeac` |
+| Game path | `assets/tiles/dark_badlands/` |
+| Source | Imported pre-existing PixelLab tileset (not generated via assetmanager prompt) |
+| Lower | Warm peach/sand desert floor with pink-clay speckles, seamless |
+| Upper | Dark purple-brown basalt boulder clusters with bright rock inclusions |
+| transition_size | n/a (pre-made) |
+| Chaining | None — imported as-is |
+| Wang flipped | No |
+| Used by | `BADLANDS_TEST_ROOM` ("Sunbleached Badlands", direct-load via `?testRoom=dark_badlands`) |
+| Intended for | Earth/rock riftling encounters — open rocky arena with boulder cover |
+| Notes | **Palette mismatch vs other biomes.** This tileset is warm-toned (peach floor) and fails the rift cohesion "temperature" test — every other biome except `dark_lava` has a dark green grass base. Accepted intentionally as a contrasting themed area ("scorched outer rim" / desert fragment breaking through the rift). If used in a run alongside grass biomes, expect a visible tonal shift. Consider regenerating a cool-toned stone variant for general earth-habitat use if cohesion becomes a problem. |
+
+### dark_jungle
+| Field | Value |
+|---|---|
+| PixelLab ID | `9051b062-5545-4829-b5e6-c9e1c7444c99` |
+| Game path | `assets/tiles/dark_jungle/` |
+| Prompt | `"Dark mossy jungle floor to dense tangled vine wall, rift-themed 16-bit RPG tileset"` |
+| Lower | `"damp dark mossy jungle floor, dark green grass with exposed gnarled roots and fallen dark leaves, faint purple bioluminescent moss patches, desaturated twilight tone, subtle pixel texture, 16-bit RPG style"` |
+| Upper | `"dense wall of tangled dark vines and broad jungle leaves, thick liana curtains with faint violet orchid blooms glowing in shadow, impassable overgrowth, desaturated dark tone, 16-bit RPG style"` |
+| Transition | `"creeping roots and vines spilling onto the floor, fern fringe at the base of the vine wall"` |
+| transition_size | 0.25 |
+| Chaining | `--lower-base-tile-id 1d119ba0-3335-4c77-8d15-9873098dcf26` (grass is lower) |
+| Adherence | 95 |
+| Wang flipped | No |
+| Used by | `JUNGLE_TEST_ROOM` ("Tangled Rift Hollow", direct-load via `?testRoom=dark_jungle`) |
+| Companion props | `giant_fern` (`ae218cdf-d96c-4b7a-9519-5e817318ae2b`) — understory anchor, 36px, no collision. Scene also reuses `twisted_dark_tree`, `corrupted_tree`, `hollow_log`, `glowing_mushroom`, `tall_grass_dark`. |
+| Notes | Vine wall reads as dark mass at game scale — the violet orchid glow from the prompt is subtle and tonally cohesive rather than punchy. Good tradeoff for rift family consistency; if a more distinct jungle identity is wanted later, regenerate with stronger "glowing purple orchids" wording and higher saturation on the accent color. |
+
+### dark_void
+| Field | Value |
+|---|---|
+| PixelLab ID | `f221b7d3-335e-46ff-b18d-ee0f1c17a0d0` |
+| Game path | `assets/tiles/dark_void/` |
+| Prompt | `"Dark obsidian platform floating above swirling purple rift void, rift-themed 16-bit RPG tileset"` |
+| Lower | `"cracked dark obsidian stone platform floor, deep black-violet basalt with faint purple rift glow seeping from hairline cracks, scattered cyan shard flecks embedded in the stone, desaturated twilight tone, subtle pixel texture, 16-bit RPG style"` |
+| Upper | `"swirling purple rift void, deep violet abyss with brighter magenta energy filaments and faint cyan sparks drifting through, impassable otherworldly chasm, glowing unnatural depths, 16-bit RPG style"` |
+| Transition | `"crumbling obsidian platform edge dropping into the glowing void, broken stone lip with faint cyan shard fragments clinging to the rim, purple energy bleeding over the edge"` |
+| transition_size | 0.5 |
+| Chaining | `--no-chain` (no grass in either terrain — same call as `dark_lava`) |
+| Wang flipped | No — upper is hazard/impassable, standard orientation |
+| Used by | `RIFT_SHARD_ROOM` (Rift Shard terminal reward chamber, `dark_void` biome); also direct-loadable via `?testRoom=dark_void` |
+| Notes | Reads as a floating obsidian shrine suspended over rift void. Floor/void contrast is luminance-based rather than hue-based — both are purple, but the wang transition tiles have a visible cyan shard rim that clearly marks the edge at game scale. The rift shard trinket pickup auto-spawns in the chamber center (built-in to the `rift_shard` room type), so no pedestal prop is required. |
+
 ## Planned Biomes
 
 Future tilesets to generate using this same process:
 
 | Biome | Lower | Upper | transition_size | Flip? | Notes |
 |---|---|---|---|---|---|
-| dark_void | dark stone platform | purple void | 0.5 | No | Tier 2 floating platforms over void |
 | dark_crystal | dark earth | cyan crystal formations | 0.25 | No | Tier 2 crystal caves |
 
 ## Lessons Learned

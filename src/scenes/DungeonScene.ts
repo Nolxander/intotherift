@@ -6,12 +6,14 @@ import {
   DungeonRoom,
   KEY_PATH_SLOT,
   BOSS_SLOT,
+  speciesForBiome,
 } from '../data/dungeon';
 import { RoomTemplate, Biome, TEST_ROOMS } from '../data/room_templates';
 import { DECORATION_CATALOG } from '../data/decorations';
 import { CombatManager, CompanionEntry, DefeatedRiftling } from '../combat/CombatManager';
-import { Party, PartyRiftling, createStartingParty, createRiftling, addToParty, awardXP, getActiveSynergies, BENCH_XP_RATIO, LevelUpResult, RIFTLING_TEMPLATES, AVAILABLE_RIFTLINGS, TYPE_COLORS } from '../data/party';
-import { getXPMultiplier, TRINKET_CATALOG, TrinketDef, addTrinket, ALL_TRINKET_IDS } from '../data/trinkets';
+import { computeEliteFormation } from '../combat/eliteFormation';
+import { Party, PartyRiftling, createStartingParty, createRiftling, addToParty, awardXP, getActiveSynergies, BENCH_XP_RATIO, LevelUpResult, RIFTLING_TEMPLATES, AVAILABLE_RIFTLINGS, TYPE_COLORS, speciesScale } from '../data/party';
+import { getXPMultiplier, getBossTimerBonus, getEliteXPMultiplier, getLowestLevelXPBonus, TRINKET_CATALOG, TrinketDef, addTrinket, ALL_TRINKET_IDS } from '../data/trinkets';
 import { SimpleNav, NavPoint, NAV_ARRIVAL_RADIUS, STUCK_WINDOW_MS, STUCK_THRESHOLD_PX } from '../data/nav';
 import { playWalkOrStatic, stopWalkAnim, directionFromVelocity } from '../data/anims';
 import { RecruitPrompt } from '../ui/RecruitPrompt';
@@ -73,6 +75,7 @@ interface TileEntry {
   image: Phaser.GameObjects.Image | null;
   overlay: Phaser.GameObjects.Rectangle | null;
   wallBody: Phaser.Physics.Arcade.Sprite | null;
+  pathOverlay: Phaser.GameObjects.Image | null;
 }
 
 /** Tracked decoration sprite — kept so the builder can remove individual props
@@ -145,6 +148,8 @@ export class DungeonScene extends Phaser.Scene {
   private combatManager!: CombatManager;
   private combatHud!: CombatHUD;
   private roomClearedText!: Phaser.GameObjects.Text | null;
+  /** Non-combatant rift entity that commands an elite squad — vanishes on victory. */
+  private eliteNpcSprite: Phaser.GameObjects.Sprite | null = null;
 
   // Healing spring
   private healingSpring: { zone: Phaser.GameObjects.Zone; visual: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text } | null = null;
@@ -155,11 +160,26 @@ export class DungeonScene extends Phaser.Scene {
   private riftShardUsed = false;
   private riftShardSelecting = false;
   private riftShardUI: Phaser.GameObjects.Container | null = null;
+
+  // Recruit gathering — 1-3 stationary riftling NPCs in a recruit terminal.
+  // Walking near them opens the RecruitPrompt with those species as options.
+  private recruitGathering: {
+    zone: Phaser.GameObjects.Zone;
+    sprites: Phaser.GameObjects.Image[];
+    label: Phaser.GameObjects.Text;
+    offerings: string[];
+  } | null = null;
+  private recruitGatheringUsed = false;
   /** True while the starter riftling selection overlay is open. */
   private starterSelectActive = false;
 
   // Starter trinket selection overlay
   private trinketSelectUI: Phaser.GameObjects.Container | null = null;
+
+  /** Deferred starter trinket grant — set true when the run starts; the
+   *  trinket selection is then opened the first time the player reaches the
+   *  hub (after the two intro combats). */
+  private starterTrinketPending = false;
 
   // In-browser world builder (dev-only, dynamic import)
   private builderDrawHook: (() => void) | null = null;
@@ -223,9 +243,14 @@ export class DungeonScene extends Phaser.Scene {
 
     this.spawnHealingSpring();
     this.spawnRiftShard();
+    this.spawnRecruitGathering();
 
-    // Show starter riftling selection — timer paused, gameplay frozen until chosen
-    this.showStarterSelect();
+    // Show starter riftling selection — timer paused, gameplay frozen until chosen.
+    // Skipped in testRoom direct-load so world builders can view scenes without
+    // the picker overlay blocking the camera.
+    if (!testTemplate) {
+      this.showStarterSelect();
+    }
 
     // Dev-only: load the in-browser world builder. Dynamic import behind
     // import.meta.env.DEV so Rollup tree-shakes it out of prod builds.
@@ -340,6 +365,7 @@ export class DungeonScene extends Phaser.Scene {
     this.companions = [];
     this.healingSpring = null;
     this.riftShard = null;
+    this.recruitGathering = null;
     this.walls.clear(true, true);
     this.doorZones = [];
     this.tileEntries = [];
@@ -391,7 +417,7 @@ export class DungeonScene extends Phaser.Scene {
     for (let y = 0; y < tmpl.height; y++) {
       const row: TileEntry[] = [];
       for (let x = 0; x < tmpl.width; x++) {
-        row.push({ image: null, overlay: null, wallBody: null });
+        row.push({ image: null, overlay: null, wallBody: null, pathOverlay: null });
       }
       this.tileEntries.push(row);
     }
@@ -440,7 +466,9 @@ export class DungeonScene extends Phaser.Scene {
 
     // Build nav grid from the resolved tile map for this room (plus the
     // decoration-blocked tiles computed above).
-    this.nav = new SimpleNav(resolved, TILE, decBlocked);
+    // Unit bodies are ~20–24 px; a 12 px clearance dilates obstacles by one
+    // 16 px tile so paths don't graze walls or tree trunks.
+    this.nav = new SimpleNav(resolved, TILE, decBlocked, 12);
 
     room.visited = true;
   }
@@ -634,6 +662,7 @@ export class DungeonScene extends Phaser.Scene {
     // Clear previous render
     if (entry.image) { entry.image.destroy(); entry.image = null; }
     if (entry.overlay) { entry.overlay.destroy(); entry.overlay = null; }
+    if (entry.pathOverlay) { entry.pathOverlay.destroy(); entry.pathOverlay = null; }
     if (entry.wallBody) {
       this.walls.remove(entry.wallBody, true, true);
       entry.wallBody = null;
@@ -661,6 +690,23 @@ export class DungeonScene extends Phaser.Scene {
           entry.overlay = this.add.rectangle(px, py, TILE, TILE, 0x66aaff, 0.25).setDepth(0);
           break;
       }
+    }
+
+    // Hub path overlay — when the template defines a path mask, layer a
+    // wang-tiled dirt trail on top of the base floor for any path tile.
+    // Computed from path-neighbor bits, so edges fade into grass naturally.
+    const pathMask = this.currentRoom?.template.paths;
+    if (pathMask && (tileType === 1 || tileType === 3) && pathMask[y]?.[x] === 1) {
+      const isPath = (tx: number, ty: number): boolean => {
+        if (tx < 0 || ty < 0 || tx >= w || ty >= h) return false;
+        return pathMask[ty]?.[tx] === 1;
+      };
+      const nw = (isPath(x - 1, y) || isPath(x, y - 1) || isPath(x - 1, y - 1)) ? 1 : 0;
+      const ne = (isPath(x + 1, y) || isPath(x, y - 1) || isPath(x + 1, y - 1)) ? 1 : 0;
+      const sw = (isPath(x - 1, y) || isPath(x, y + 1) || isPath(x - 1, y + 1)) ? 1 : 0;
+      const se = (isPath(x + 1, y) || isPath(x, y + 1) || isPath(x + 1, y + 1)) ? 1 : 0;
+      const wangIndex = (se << 0) | (sw << 1) | (ne << 2) | (nw << 3);
+      entry.pathOverlay = this.add.image(px, py, `hub_dirt_path_${wangIndex}`).setDepth(-0.5);
     }
 
     // Physics collider for walls/void
@@ -968,10 +1014,15 @@ export class DungeonScene extends Phaser.Scene {
         ty = this.trainer.y + offset.y;
       }
       const texture = `${riftling.texturePrefix}_south`;
+      const spriteScale = 0.7 * speciesScale(riftling.texturePrefix);
 
       if (i < this.companions.length && this.companions[i].sprite.active) {
         // Reuse existing companion — reposition and update texture; reset nav state
-        this.companions[i].sprite.setPosition(tx, ty).setVelocity(0, 0).setTexture(texture);
+        this.companions[i].sprite
+          .setPosition(tx, ty)
+          .setVelocity(0, 0)
+          .setTexture(texture)
+          .setScale(spriteScale);
         this.companions[i].waypoints = [];
         this.companions[i].lastNavGoal = null;
         this.companions[i].lastPos = { x: tx, y: ty };
@@ -981,7 +1032,7 @@ export class DungeonScene extends Phaser.Scene {
         // Create new companion sprite
         const sprite = this.physics.add.sprite(tx, ty, texture);
         sprite.setDepth(10 + ty / 10);
-        sprite.setScale(0.7);
+        sprite.setScale(spriteScale);
 
         const entry: CompanionState = {
           sprite,
@@ -1138,7 +1189,12 @@ export class DungeonScene extends Phaser.Scene {
     const tmpl = this.currentRoom.template;
     const isCombatRoom = ['combat', 'elite', 'recruit', 'boss'].includes(tmpl.type);
 
-    if (isCombatRoom && !this.currentRoom.cleared && tmpl.enemySpawns.length > 0 && this.companions.length > 0) {
+    // Elite terminals carry a procedurally themed team on the room itself
+    // (dungeon gen attaches `eliteTeamOverride`), overriding the shared
+    // template's eliteTeam. Wild combat rooms have no override.
+    const eliteTeam = this.currentRoom.eliteTeamOverride ?? tmpl.eliteTeam;
+    const hasEnemies = tmpl.enemySpawns.length > 0 || (eliteTeam?.length ?? 0) > 0;
+    if (isCombatRoom && !this.currentRoom.cleared && hasEnemies && this.companions.length > 0) {
       const entries: CompanionEntry[] = this.party.active.map((data, i) => ({
         data,
         sprite: this.companions[i].sprite,
@@ -1154,7 +1210,22 @@ export class DungeonScene extends Phaser.Scene {
       // Scale enemy count for swarm feel — later rooms spawn many more enemies
       // Elite/boss keep their template counts (they're meant to be fewer, tougher foes)
       const spawns = [...tmpl.enemySpawns];
-      if (tmpl.type === 'combat' || tmpl.type === 'recruit') {
+      const introTarget = this.currentRoom.introSpawnCount;
+      if (introTarget !== undefined) {
+        if (spawns.length > introTarget) spawns.length = introTarget;
+        if (spawns.length < introTarget) {
+          const floorTiles: { x: number; y: number }[] = [];
+          for (let ry = 2; ry < tmpl.height - 2; ry++) {
+            for (let rx = 2; rx < tmpl.width - 2; rx++) {
+              if (tmpl.tiles[ry][rx] === 1) floorTiles.push({ x: rx, y: ry });
+            }
+          }
+          while (spawns.length < introTarget && floorTiles.length > 0) {
+            const idx = Math.floor(Math.random() * floorTiles.length);
+            spawns.push(floorTiles.splice(idx, 1)[0]);
+          }
+        }
+      } else if (tmpl.type === 'combat' || tmpl.type === 'recruit') {
         const extraCount = Math.floor(roomsCleared * 1.5);
         // Only use walkable floor tiles (value 1) so enemies don't spawn stuck in walls
         const floorTiles: { x: number; y: number }[] = [];
@@ -1183,6 +1254,32 @@ export class DungeonScene extends Phaser.Scene {
         entrySide = relY > 0 ? 'south' : 'north';
       }
 
+      // Elite encounter: compute smart role-based formation (ranged back,
+      // melee front) from team roster + entry side, spawn the rift-entity
+      // trainer at the computed anchor, and pass the pixel positions through
+      // to CombatManager.
+      let eliteTrainerPos: { x: number; y: number } | undefined;
+      let eliteFormationPixels: { x: number; y: number }[] | undefined;
+      if (tmpl.type === 'elite' && eliteTeam && eliteTeam.length > 0) {
+        const formation = computeEliteFormation(eliteTeam, entrySide, roomPxW, roomPxH);
+        eliteFormationPixels = formation.spawns;
+        eliteTrainerPos = formation.trainerPos;
+
+        this.eliteNpcSprite?.destroy();
+        // Placeholder rift entity visual: tinted translucent trainer sprite
+        // until a dedicated asset ships.
+        this.eliteNpcSprite = this.add
+          .sprite(eliteTrainerPos.x, eliteTrainerPos.y, 'player_south')
+          .setScale(1.15)
+          .setTint(0xb57aff)
+          .setAlpha(0.85)
+          .setDepth(10 + eliteTrainerPos.y / 10);
+      }
+
+      // Build wild-species pool from the room's biome. Biomes are places,
+      // not type filters — any element can inhabit any biome.
+      const wildSpeciesPool = speciesForBiome(this.currentRoom.template.biome);
+
       this.combatManager.startEncounter(
         spawns,
         entries,
@@ -1193,6 +1290,10 @@ export class DungeonScene extends Phaser.Scene {
         entrySide,
         this.party.trinkets,
         this.nav,
+        eliteTeam,
+        eliteTrainerPos,
+        eliteFormationPixels,
+        wildSpeciesPool,
       );
       // CombatHUD is always visible — no show/hide needed
     }
@@ -1212,12 +1313,29 @@ export class DungeonScene extends Phaser.Scene {
     const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
     const radius = 20;
 
-    // Glowing pool visual
     const gfx = this.add.graphics().setDepth(0);
-    gfx.fillStyle(0x22aa66, 0.3);
-    gfx.fillCircle(cx, cy, radius);
-    gfx.fillStyle(0x44ffaa, 0.2);
-    gfx.fillCircle(cx, cy, radius * 0.6);
+    const isHub = type === 'hub';
+    if (isHub) {
+      // Rift-crystal spring: cracked obsidian basin rimmed with dark stone,
+      // filled with a cyan-violet glow and a bright inner core.
+      gfx.fillStyle(0x0a0818, 0.85);
+      gfx.fillCircle(cx, cy, radius + 2);
+      gfx.lineStyle(1, 0x5a3a8a, 0.9);
+      gfx.strokeCircle(cx, cy, radius + 2);
+      gfx.fillStyle(0x2a1850, 0.7);
+      gfx.fillCircle(cx, cy, radius);
+      gfx.fillStyle(0x5a3aaa, 0.55);
+      gfx.fillCircle(cx, cy, radius * 0.75);
+      gfx.fillStyle(0x88ccff, 0.65);
+      gfx.fillCircle(cx, cy, radius * 0.45);
+      gfx.fillStyle(0xccf0ff, 0.8);
+      gfx.fillCircle(cx, cy, radius * 0.2);
+    } else {
+      gfx.fillStyle(0x22aa66, 0.3);
+      gfx.fillCircle(cx, cy, radius);
+      gfx.fillStyle(0x44ffaa, 0.2);
+      gfx.fillCircle(cx, cy, radius * 0.6);
+    }
 
     // Pulsing glow
     this.tweens.add({
@@ -1232,7 +1350,7 @@ export class DungeonScene extends Phaser.Scene {
       .text(cx, cy - radius - 6, 'Walk here to heal', {
         fontFamily: 'monospace',
         fontSize: '8px',
-        color: '#44ffaa',
+        color: isHub ? '#aaccff' : '#44ffaa',
         stroke: '#000000',
         strokeThickness: 2,
       })
@@ -1331,7 +1449,7 @@ export class DungeonScene extends Phaser.Scene {
       container.add(cardBg);
 
       // Sprite preview
-      const sprite = this.add.image(cx, cy - 14, `${tmpl.texturePrefix}_south`).setScale(0.5);
+      const sprite = this.add.image(cx, cy - 14, `${tmpl.texturePrefix}_south`).setScale(0.5 * speciesScale(tmpl.texturePrefix));
       container.add(sprite);
 
       // Name
@@ -1400,8 +1518,10 @@ export class DungeonScene extends Phaser.Scene {
     this.drawPartyHud();
     this.synergyHud?.refresh();
 
-    // Chain into trinket selection
-    this.showStarterTrinketSelect();
+    // Defer trinket grant until the player reaches the hub after the intro
+    // combats. Start the first intro combat immediately.
+    this.starterTrinketPending = true;
+    this.tryStartCombat();
   }
 
   private showStarterTrinketSelect(): void {
@@ -1411,10 +1531,8 @@ export class DungeonScene extends Phaser.Scene {
     const choices = pickRandomTrinkets(3);
     this.showTrinketSelection(choices, (trinket) => {
       this.onTrinketPicked(trinket);
-      // Resume timer and start combat if the start room is a combat room
       if (this.timerEvent) this.timerEvent.paused = false;
-      this.tryStartCombat();
-    }, 'Choose a Trinket', 'Select one to bring on your run');
+    }, 'Choose a Crystal', 'Select one to bring on your run');
   }
 
   // --- Rift Shard ---
@@ -1465,6 +1583,18 @@ export class DungeonScene extends Phaser.Scene {
     const zone = this.add.zone(cx, cy, radius * 2.5, radius * 2.5);
     this.physics.add.existing(zone, true);
 
+    // Click-to-activate hit area
+    const hit = this.add
+      .rectangle(cx, cy, radius * 2.5, radius * 2.5, 0x000000, 0)
+      .setDepth(101)
+      .setInteractive({ useHandCursor: true });
+    hit.on('pointerdown', () => {
+      if (this.riftShardUsed || this.riftShardSelecting) return;
+      this.riftShardSelecting = true;
+      this.stopAllMovement();
+      this.showTrinketSelection();
+    });
+
     this.riftShard = { zone, visual: gfx, label };
   }
 
@@ -1481,7 +1611,7 @@ export class DungeonScene extends Phaser.Scene {
     }
   }
 
-  private showTrinketSelection(choices?: TrinketDef[], onPicked?: (trinket: TrinketDef) => void, title = 'Rift Shard', subtitle = 'Choose a trinket'): void {
+  private showTrinketSelection(choices?: TrinketDef[], onPicked?: (trinket: TrinketDef) => void, title = 'Rift Shard', subtitle = 'Choose a crystal'): void {
     if (!choices) choices = pickRandomTrinkets(2);
     if (!onPicked) onPicked = (t) => this.selectRiftShardTrinket(t);
 
@@ -1667,6 +1797,120 @@ export class DungeonScene extends Phaser.Scene {
     }
   }
 
+  // --- Recruit Gathering (themed recruit terminal reward) ---
+
+  /**
+   * Spawn 1-3 stationary riftling NPCs in a recruit terminal room, based on
+   * the branch's pre-rolled biome offerings. Walking up to the gathering
+   * opens the RecruitPrompt; picking one adds it to the party and clears
+   * the others. Mirrors the rift-shard spawn/check pattern.
+   */
+  private spawnRecruitGathering(): void {
+    const room = this.currentRoom;
+    const tmpl = room.template;
+    if (tmpl.type !== 'recruit') return;
+    const offerings = room.recruitOfferings;
+    if (!offerings || offerings.length === 0) return;
+
+    this.recruitGatheringUsed = false;
+
+    const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
+    const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
+
+    // Space the NPCs across a horizontal line at room center.
+    const spacing = 28;
+    const totalW = (offerings.length - 1) * spacing;
+    const startX = cx - totalW / 2;
+
+    const sprites: Phaser.GameObjects.Image[] = [];
+    for (let i = 0; i < offerings.length; i++) {
+      const key = offerings[i];
+      const tmplDef = RIFTLING_TEMPLATES[key];
+      if (!tmplDef) continue;
+      const px = startX + i * spacing;
+      const sprite = this.add
+        .image(px, cy, `${tmplDef.texturePrefix}_south`)
+        .setScale(speciesScale(tmplDef.texturePrefix))
+        .setDepth(10 + cy / 10);
+      this.tweens.add({
+        targets: sprite,
+        y: cy - 2,
+        duration: 900,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.InOut',
+      });
+      sprites.push(sprite);
+    }
+
+    const label = this.add
+      .text(cx, cy - 24, 'Walk here to recruit', {
+        fontFamily: 'monospace',
+        fontSize: '8px',
+        color: '#44ff88',
+        stroke: '#000000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5)
+      .setDepth(100);
+
+    const zoneW = Math.max(48, totalW + 48);
+    const zone = this.add.zone(cx, cy, zoneW, 40);
+    this.physics.add.existing(zone, true);
+
+    this.recruitGathering = { zone, sprites, label, offerings, };
+  }
+
+  private checkRecruitGathering(): void {
+    if (!this.recruitGathering || this.recruitGatheringUsed) return;
+    if (this.recruitPrompt.isActive || this.pendingRecruit) return;
+
+    const trainerBounds = this.trainer.getBounds();
+    const zoneBounds = this.recruitGathering.zone.getBounds();
+    if (!Phaser.Geom.Rectangle.Overlaps(trainerBounds, zoneBounds)) return;
+
+    this.recruitGatheringUsed = true;
+    this.pendingRecruit = true;
+    this.stopAllMovement();
+
+    // Build stub DefeatedRiftling entries so RecruitPrompt.show can reuse
+    // its existing pre-roll + UI path.
+    const stubs: DefeatedRiftling[] = this.recruitGathering.offerings
+      .map((key) => {
+        const t = RIFTLING_TEMPLATES[key];
+        if (!t) return null;
+        return { riftlingKey: key, texturePrefix: t.texturePrefix, name: t.name };
+      })
+      .filter((x): x is DefeatedRiftling => x !== null);
+
+    this.recruitPrompt.show(stubs, (recruited) => {
+      if (recruited) {
+        const added = addToParty(this.party, recruited);
+        if (added) {
+          this.showMessage(`${recruited.name} joined your team!`, '#44ff88');
+        } else {
+          this.showMessage('Team is full!', '#ff8844');
+        }
+      }
+      this.syncCompanions();
+      this.drawPartyHud();
+      this.synergyHud?.refresh();
+      this.pendingRecruit = false;
+
+      // Fade out the remaining NPCs — the chosen one (or none) has been
+      // resolved. Label becomes a passive tag.
+      if (this.recruitGathering) {
+        this.recruitGathering.label.setText('Gathering dispersed');
+        this.recruitGathering.label.setColor('#666666');
+        this.tweens.add({
+          targets: [...this.recruitGathering.sprites, this.recruitGathering.label],
+          alpha: 0,
+          duration: 800,
+        });
+      }
+    }, this.getRecruitTargetLevel());
+  }
+
   private stopAllMovement(): void {
     this.trainer.setVelocity(0, 0);
     for (const c of this.companions) {
@@ -1674,9 +1918,30 @@ export class DungeonScene extends Phaser.Scene {
     }
   }
 
+  private getRecruitTargetLevel(): number {
+    const active = this.party.active;
+    if (active.length === 0) return 1;
+    const avg = active.reduce((s, r) => s + r.level, 0) / active.length;
+    return Math.max(1, Math.floor(avg));
+  }
+
   private onRoomCleared(defeated: DefeatedRiftling[]): void {
     this.currentRoom.cleared = true;
     this.pendingRecruit = true;
+
+    // Elite trainer vanishes when their squad is defeated — fade + scale out.
+    if (this.eliteNpcSprite) {
+      const npc = this.eliteNpcSprite;
+      this.eliteNpcSprite = null;
+      this.tweens.add({
+        targets: npc,
+        alpha: 0,
+        scaleX: 0,
+        scaleY: 0,
+        duration: 500,
+        onComplete: () => npc.destroy(),
+      });
+    }
     // CombatHUD stays visible — cooldown bars will stop updating when combat ends
     this.updateMinimap();
     this.stopAllMovement();
@@ -1687,9 +1952,18 @@ export class DungeonScene extends Phaser.Scene {
       this.party.active[i].hp = hps[i] ?? this.party.active[i].hp;
     }
 
+    // Boss clear timer bonus from equipped crystals (e.g. Timer Shard)
+    if (this.currentRoom.template.type === 'boss') {
+      const bossBonus = getBossTimerBonus(this.party.trinkets);
+      if (bossBonus > 0) {
+        this.timerSeconds += bossBonus;
+        this.showMessage(`+${bossBonus}s from crystal!`, '#ffdd44');
+      }
+    }
+
     // Distribute XP to all party members
     const xpEarned = this.combatManager.xpEarned;
-    const levelUps = this.distributeXP(xpEarned);
+    const levelUps = this.distributeXP(xpEarned, this.currentRoom.template.type);
 
     // Show "Room Cleared!" then level-ups, then recruit prompt
     this.roomClearedText = this.add
@@ -1758,7 +2032,7 @@ export class DungeonScene extends Phaser.Scene {
             this.drawPartyHud();
             this.synergyHud?.refresh();
             this.pendingRecruit = false;
-          });
+          }, this.getRecruitTargetLevel());
         } else {
           this.pendingRecruit = false;
         }
@@ -1767,18 +2041,31 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   /** Distribute XP to active (full) and bench (reduced) riftlings. Returns level-up results. */
-  private distributeXP(totalXP: number): LevelUpResult[] {
+  private distributeXP(totalXP: number, roomType?: string): LevelUpResult[] {
     if (totalXP <= 0) return [];
 
-    // Apply trinket XP multiplier
-    const xpMult = getXPMultiplier(this.party.trinkets);
+    // Apply crystal XP multiplier (plus elite-room bonus if applicable)
+    let xpMult = getXPMultiplier(this.party.trinkets);
+    if (roomType === 'elite') xpMult *= getEliteXPMultiplier(this.party.trinkets);
     totalXP = Math.floor(totalXP * xpMult);
 
     const levelUps: LevelUpResult[] = [];
     const benchXP = Math.floor(totalXP * BENCH_XP_RATIO);
 
-    for (const riftling of this.party.active) {
-      const result = awardXP(riftling, totalXP);
+    // Scholar's Lens: identify the lowest-level active riftling (ties → first).
+    const lowLevelMult = getLowestLevelXPBonus(this.party.trinkets);
+    let lowestIdx = -1;
+    if (lowLevelMult > 1 && this.party.active.length > 0) {
+      lowestIdx = 0;
+      for (let i = 1; i < this.party.active.length; i++) {
+        if (this.party.active[i].level < this.party.active[lowestIdx].level) lowestIdx = i;
+      }
+    }
+
+    for (let i = 0; i < this.party.active.length; i++) {
+      const riftling = this.party.active[i];
+      const share = i === lowestIdx ? Math.floor(totalXP * lowLevelMult) : totalXP;
+      const result = awardXP(riftling, share);
       if (result) levelUps.push(result);
     }
     for (const riftling of this.party.bench) {
@@ -1916,6 +2203,12 @@ export class DungeonScene extends Phaser.Scene {
     // Clean up current combat (keep combatHud — it persists across rooms)
     this.combatManager.destroy();
 
+    // Drop any lingering elite NPC sprite so it doesn't leak across rooms.
+    if (this.eliteNpcSprite) {
+      this.eliteNpcSprite.destroy();
+      this.eliteNpcSprite = null;
+    }
+
     const prevRoom = this.currentRoom;
     const targetRoom = this.dungeon.rooms[targetRoomId];
 
@@ -1968,6 +2261,15 @@ export class DungeonScene extends Phaser.Scene {
     this.tryStartCombat();
     this.spawnHealingSpring();
     this.spawnRiftShard();
+    this.spawnRecruitGathering();
+
+    // Grant the starter trinket the first time the player reaches the hub,
+    // i.e. after clearing both intro combats. The hub isn't a combat room so
+    // opening the overlay here doesn't collide with a pending encounter.
+    if (this.starterTrinketPending && targetRoom.template.type === 'hub') {
+      this.starterTrinketPending = false;
+      this.showStarterTrinketSelect();
+    }
   }
 
   /** Determine pixel spawn position based on which edge the player enters from. */
@@ -2116,7 +2418,7 @@ export class DungeonScene extends Phaser.Scene {
       // Sprite icon
       const spriteKey = `${r.texturePrefix}_south`;
       if (this.textures.exists(spriteKey)) {
-        const icon = this.add.image(startX + 14, y + slotH / 2, spriteKey).setScale(0.4);
+        const icon = this.add.image(startX + 14, y + slotH / 2, spriteKey).setScale(0.4 * speciesScale(r.texturePrefix));
         this.partyHud.add(icon);
       }
 
@@ -2135,7 +2437,8 @@ export class DungeonScene extends Phaser.Scene {
 
       // Role label + HP numbers (same row, below name)
       const roleColors: Record<string, string> = {
-        chaser: '#ff6644', anchor: '#6688cc', skirmisher: '#44cc88',
+        vanguard: '#6688cc', skirmisher: '#44cc88', striker: '#ff6644',
+        caster: '#cc66ff', hunter: '#ffaa33', support: '#88ddaa', hexer: '#aa44cc',
       };
       const hpRatio = r.hp / r.maxHp;
       const hpColor = hpRatio > 0.5 ? '#44cc44' : hpRatio > 0.25 ? '#ccaa22' : '#cc3333';
@@ -2166,10 +2469,16 @@ export class DungeonScene extends Phaser.Scene {
       gfx.fillRect(barX, barY, Math.round(barW * hpRatio), barH);
 
       // Make clickable to select
+      const clickedIndex = i;
       const hitZone = this.add.rectangle(startX + slotW / 2, y + slotH / 2, slotW, slotH, 0x000000, 0)
         .setScrollFactor(0).setDepth(101).setInteractive({ useHandCursor: true });
       hitZone.on('pointerdown', () => {
-        this.selectedIndex = i;
+        if (this.selectedIndex === clickedIndex) return;
+        this.selectedIndex = clickedIndex;
+        if (this.combatManager?.isActive) {
+          const sprite = this.companions[clickedIndex]?.sprite;
+          if (sprite) this.combatManager.selectAllyBySprite(sprite);
+        }
         this.drawPartyHud();
       });
       this.partyHud.add(hitZone);
@@ -2292,6 +2601,7 @@ export class DungeonScene extends Phaser.Scene {
 
     this.checkHealingSpring();
     this.checkRiftShard();
+    this.checkRecruitGathering();
     this.checkDoorTransitions();
   }
 

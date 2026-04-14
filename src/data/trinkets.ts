@@ -6,7 +6,7 @@
  * are applied to all allies at combat start alongside synergy buffs.
  */
 
-import { StatKey } from './party';
+import { StatKey, Role } from './party';
 
 // --- Capacity ---
 
@@ -31,6 +31,16 @@ export interface TrinketDef {
   special?: TrinketSpecial;
   /** Value for the special effect (multiplier, seconds, etc.). */
   specialValue?: number;
+  /** Extra bag slots granted while equipped. */
+  bagSlotBonus?: number;
+  /** Seconds added to the dungeon timer when a boss room is cleared. */
+  bossTimerBonus?: number;
+  /** Additional XP multiplier applied to elite room clears (e.g. 0.5 = +50%). */
+  eliteXPBonus?: number;
+  /** Flat stat buffs applied only to allies whose role matches. */
+  roleBuffs?: Partial<Record<Role, Partial<Record<StatKey, number>>>>;
+  /** Extra XP multiplier applied only to the lowest-level active riftling. */
+  lowestLevelXPBonus?: number;
 }
 
 // --- Catalog ---
@@ -39,60 +49,97 @@ export const TRINKET_CATALOG: Record<string, TrinketDef> = {
   ember_charm: {
     id: 'ember_charm',
     name: 'Ember Charm',
-    description: 'All allies gain +2 Attack',
+    description: '+3 Attack, -1 Defense',
     flavor: 'Warm to the touch, never cools',
-    buffs: { attack: 2 },
+    buffs: { attack: 3, defense: -1 },
   },
   iron_shell: {
     id: 'iron_shell',
     name: 'Iron Shell',
-    description: 'All allies gain +2 Defense',
+    description: '+2 Defense, +5 Max HP',
     flavor: 'Fragment of an ancient anchor\'s armor',
-    buffs: { defense: 2 },
+    buffs: { defense: 2, hp: 5 },
   },
   swift_boots: {
     id: 'swift_boots',
     name: 'Swift Boots',
-    description: 'All allies gain +10 Speed',
+    description: '+10 Speed, +3 Evasion',
     flavor: 'The rift hums through the soles',
-    buffs: { speed: 10 },
+    buffs: { speed: 10, evasion: 3 },
   },
   vitality_ring: {
     id: 'vitality_ring',
     name: 'Vitality Ring',
-    description: 'All allies gain +15 Max HP',
+    description: '+20 Max HP',
     flavor: 'Pulses faintly with each heartbeat',
-    buffs: { hp: 15 },
+    buffs: { hp: 20 },
   },
   scavengers_pouch: {
     id: 'scavengers_pouch',
     name: 'Scavenger\'s Pouch',
-    description: '+50% XP from kills',
+    description: '+50% XP from kills, +1 bag slot',
     flavor: 'Always has room for one more thing',
     special: 'xp_bonus',
     specialValue: 0.5,
+    bagSlotBonus: 1,
   },
   timer_shard: {
     id: 'timer_shard',
     name: 'Timer Shard',
-    description: '+30s added to timer on pickup',
+    description: '+30s on pickup, +15s on boss kill',
     flavor: 'Frozen moment from a collapsed rift',
     special: 'timer_bonus',
     specialValue: 30,
+    bossTimerBonus: 15,
+  },
+  elder_lens: {
+    id: 'elder_lens',
+    name: 'Elder Lens',
+    description: '+50% XP from elite rooms',
+    flavor: 'Focuses the past into the present',
+    eliteXPBonus: 0.5,
   },
   lucky_coin: {
     id: 'lucky_coin',
     name: 'Lucky Coin',
-    description: 'All allies gain +5 Crit Rate',
+    description: '+8 Crit Rate',
     flavor: 'Heads you win, tails they lose',
-    buffs: { critRate: 5 },
+    buffs: { critRate: 8 },
   },
   phantom_cloak: {
     id: 'phantom_cloak',
     name: 'Phantom Cloak',
-    description: 'All allies gain +5 Evasion',
+    description: '+8 Evasion, -5 Max HP',
     flavor: 'Hard to hit what you can\'t quite see',
-    buffs: { evasion: 5 },
+    buffs: { evasion: 8, hp: -5 },
+  },
+  gamblers_die: {
+    id: 'gamblers_die',
+    name: 'Gambler\'s Die',
+    description: '+15 Crit Rate, -5 Evasion',
+    flavor: 'Every throw is a dare to the rift',
+    buffs: { critRate: 15, evasion: -5 },
+  },
+  chasers_fang: {
+    id: 'chasers_fang',
+    name: 'Chaser\'s Fang',
+    description: '+3 Attack to Skirmishers',
+    flavor: 'The tooth remembers the chase',
+    roleBuffs: { skirmisher: { attack: 3 } },
+  },
+  anchors_bulwark: {
+    id: 'anchors_bulwark',
+    name: 'Anchor\'s Bulwark',
+    description: '+3 Defense to Vanguards',
+    flavor: 'Weight drawn from the deep',
+    roleBuffs: { vanguard: { defense: 3 } },
+  },
+  scholars_lens: {
+    id: 'scholars_lens',
+    name: 'Scholar\'s Lens',
+    description: '+100% XP for your lowest-level riftling',
+    flavor: 'The rift teaches those who listen',
+    lowestLevelXPBonus: 1.0,
   },
 };
 
@@ -116,11 +163,25 @@ export function equipTrinket(inv: TrinketInventory, trinket: TrinketDef): boolea
   return true;
 }
 
+/** Max bag capacity including bonuses from equipped trinkets. */
+export function getMaxBag(inv: TrinketInventory): number {
+  let bonus = 0;
+  for (const t of inv.equipped) {
+    if (t.bagSlotBonus) bonus += t.bagSlotBonus;
+  }
+  return MAX_BAG + bonus;
+}
+
 /** Move a trinket from equipped to bag. Returns false if bag is full. */
 export function unequipTrinket(inv: TrinketInventory, index: number): boolean {
   if (index < 0 || index >= inv.equipped.length) return false;
-  if (inv.bag.length >= MAX_BAG) return false;
   const [trinket] = inv.equipped.splice(index, 1);
+  // Capacity check must run AFTER splicing out so the unequipped trinket's own
+  // bag bonus doesn't count, but BEFORE committing to the bag.
+  if (inv.bag.length >= getMaxBag(inv)) {
+    inv.equipped.splice(index, 0, trinket);
+    return false;
+  }
   inv.bag.push(trinket);
   return true;
 }
@@ -150,7 +211,7 @@ export function addTrinket(inv: TrinketInventory, trinket: TrinketDef): boolean 
     inv.equipped.push(trinket);
     return true;
   }
-  if (inv.bag.length < MAX_BAG) {
+  if (inv.bag.length < getMaxBag(inv)) {
     inv.bag.push(trinket);
     return true;
   }
@@ -159,7 +220,47 @@ export function addTrinket(inv: TrinketInventory, trinket: TrinketDef): boolean 
 
 /** Check whether the inventory is completely full. */
 export function isTrinketInventoryFull(inv: TrinketInventory): boolean {
-  return inv.equipped.length >= MAX_EQUIPPED && inv.bag.length >= MAX_BAG;
+  return inv.equipped.length >= MAX_EQUIPPED && inv.bag.length >= getMaxBag(inv);
+}
+
+/** Total seconds a boss clear should add to the dungeon timer from equipped trinkets. */
+export function getBossTimerBonus(inv: TrinketInventory): number {
+  let sum = 0;
+  for (const t of inv.equipped) {
+    if (t.bossTimerBonus) sum += t.bossTimerBonus;
+  }
+  return sum;
+}
+
+/** XP multiplier applied ONLY to elite room clears, stacked with the base XP mult. */
+export function getEliteXPMultiplier(inv: TrinketInventory): number {
+  let mult = 1.0;
+  for (const t of inv.equipped) {
+    if (t.eliteXPBonus) mult += t.eliteXPBonus;
+  }
+  return mult;
+}
+
+/** Merged role-specific buffs from equipped crystals. */
+export function getRoleBuffs(inv: TrinketInventory, role: Role): Partial<Record<StatKey, number>> {
+  const merged: Partial<Record<StatKey, number>> = {};
+  for (const t of inv.equipped) {
+    const b = t.roleBuffs?.[role];
+    if (!b) continue;
+    for (const [key, val] of Object.entries(b)) {
+      merged[key as StatKey] = (merged[key as StatKey] ?? 0) + val;
+    }
+  }
+  return merged;
+}
+
+/** Extra XP multiplier applied to the lowest-level active riftling only. */
+export function getLowestLevelXPBonus(inv: TrinketInventory): number {
+  let mult = 1.0;
+  for (const t of inv.equipped) {
+    if (t.lowestLevelXPBonus) mult += t.lowestLevelXPBonus;
+  }
+  return mult;
 }
 
 /**

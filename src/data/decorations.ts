@@ -74,8 +74,8 @@ const DECORATION_OVERRIDES: Record<string, Omit<DecorationDef, 'key' | 'path'>> 
   hollow_log: {
     displaySize: 48,
     collides: true,
-    collisionWidth: 40,
-    collisionHeight: 14,
+    collisionWidth: 28,
+    collisionHeight: 10,
   },
   glowing_mushroom: {
     displaySize: 32,
@@ -92,6 +92,46 @@ const DECORATION_OVERRIDES: Record<string, Omit<DecorationDef, 'key' | 'path'>> 
   tall_grass_dark: {
     displaySize: 16,
     collides: false,
+  },
+  badlands_small_rock: {
+    displaySize: 16,
+    collides: false,
+  },
+  badlands_rock_cluster: {
+    displaySize: 28,
+    collides: true,
+    collisionWidth: 14,
+    collisionHeight: 6,
+  },
+  badlands_cracked_boulder: {
+    displaySize: 40,
+    collides: true,
+    collisionWidth: 20,
+    collisionHeight: 8,
+  },
+  giant_fern: {
+    displaySize: 36,
+    collides: false,
+  },
+  rift_crystal_cluster: {
+    displaySize: 24,
+    collides: false,
+  },
+  rift_crystal_shard: {
+    displaySize: 28,
+    collides: false,
+  },
+  rift_crystal_formation: {
+    displaySize: 40,
+    collides: true,
+    collisionWidth: 16,
+    collisionHeight: 6,
+  },
+  rift_crystal_outcrop: {
+    displaySize: 32,
+    collides: true,
+    collisionWidth: 14,
+    collisionHeight: 6,
   },
 };
 

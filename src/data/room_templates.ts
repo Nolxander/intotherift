@@ -30,7 +30,7 @@ export interface HubDoorSlot {
  * 'dungeon' = legacy floor/wall/void images.
  * Wang-tile biomes use 16 autotiled wang tiles (wang_0–wang_15).
  */
-export type Biome = 'dungeon' | 'grass_cliff' | 'grass_water' | 'dark_grass_cliff' | 'dark_grass_water' | 'dark_forest' | 'dark_plains_bluff' | 'dark_lava';
+export type Biome = 'dungeon' | 'grass_cliff' | 'grass_water' | 'dark_grass_cliff' | 'dark_grass_water' | 'dark_forest' | 'dark_plains_bluff' | 'dark_lava' | 'dark_badlands' | 'dark_jungle' | 'dark_void';
 
 /**
  * A decorative prop placed in a room. The sprite is a key from
@@ -45,6 +45,19 @@ export interface Decoration {
   y: number;
 }
 
+/**
+ * A pre-made enemy on an elite trainer's team. Unlike wild enemies (random
+ * species, no moves), elite members reference a specific species and can
+ * override the default equipped moves the player's leveling system would pick.
+ */
+export interface EliteTeamMember {
+  riftlingKey: string;
+  /** Indices into the species' moves array. Omit to use the species' first two moves. */
+  equipped?: [number, number];
+  /** Level offset added to the room's computed difficulty level (e.g. +2 for a "captain"). */
+  levelBonus?: number;
+}
+
 export interface RoomTemplate {
   name: string;
   type: RoomType;
@@ -57,8 +70,22 @@ export interface RoomTemplate {
   playerSpawn: { x: number; y: number };
   /** Biome tileset to use for rendering (default: 'dungeon') */
   biome?: Biome;
+  /**
+   * Per-tile path overlay mask. 1 = tile is a walkable dirt path, 0 = not.
+   * When present, the hub renderer overlays a second wang tileset
+   * (hub_dirt_path_*) on top of the base biome floor for any tile with
+   * `paths[y][x] === 1`. Currently used only by the handcrafted hub room.
+   */
+  paths?: number[][];
   /** Decorative props placed on the floor. Rendered above the tileset. */
   decorations?: Decoration[];
+  /**
+   * Elite trainer's pre-made team. When present on an 'elite' or 'boss' room,
+   * overrides random enemy generation and spawns this fixed squad with
+   * player-style move slots instead of a wild swarm. Positioning is computed
+   * at runtime from team roles and entry side, so only the roster is authored.
+   */
+  eliteTeam?: EliteTeamMember[];
   /**
    * For hub rooms only: authored door tile positions indexed by slot. When
    * present, DungeonScene skips cardinal edge masking and spawns door zones
@@ -186,12 +213,18 @@ export const COMBAT_ROOM_2: RoomTemplate = (() => {
   return room;
 })();
 
-// --- Elite room: small arena, one strong enemy ---
-export const ELITE_ROOM: RoomTemplate = makeRoom(
-  'elite',
-  'Elite Chamber',
-  [{ x: 15, y: 8 }],
-);
+// --- Elite room: rift trainer commands a pre-made squad of three ---
+// The squad roster is authored; positioning is computed at runtime from
+// team roles and the player's entry side. The trainer NPC vanishes on victory.
+export const ELITE_ROOM: RoomTemplate = (() => {
+  const room = makeRoom('elite', 'Rift Warden\'s Sanctum', []);
+  room.eliteTeam = [
+    { riftlingKey: 'pyreshell',    equipped: [0, 1] }, // fire anchor — melee frontline
+    { riftlingKey: 'tidecrawler',  equipped: [0, 1] }, // water anchor — melee frontline
+    { riftlingKey: 'thistlebound', equipped: [0, 2] }, // nature hunter — ranged backline
+  ];
+  return room;
+})();
 
 // --- Boss room: large open space ---
 export const BOSS_ROOM: RoomTemplate = makeRoom(
@@ -203,15 +236,98 @@ export const BOSS_ROOM: RoomTemplate = makeRoom(
 // --- Healing room: safe, no enemies ---
 export const HEALING_ROOM: RoomTemplate = makeRoom('healing', 'Rift Spring');
 
-// --- Recruit room: combat + guaranteed recruit ---
+// --- Recruit room: safe walk-in reward. ---
+// No enemy spawns — the room contains 1-3 stationary riftlings (spawned at
+// runtime by the scene from the branch's biome pool) that the player walks
+// up to and chooses one to recruit.
 export const RECRUIT_ROOM: RoomTemplate = makeRoom(
   'recruit',
-  'Recruit Encounter',
-  [{ x: 12, y: 8 }, { x: 18, y: 8 }],
+  'Rift Gathering',
+  [],
 );
 
 // --- Rift Shard room: safe, trinket reward ---
-export const RIFT_SHARD_ROOM: RoomTemplate = makeRoom('rift_shard', 'Rift Shard');
+// Floating obsidian shrine chamber suspended over the purple rift void.
+// The rectangle is carved into an octagonal apse by filling the corners
+// with void (tile 2, renders as wang_15 purple swirl). Doors on all four
+// sides are preserved so the dungeon generator can connect the room from
+// any direction — DungeonScene masks inactive doors as walls at load.
+export const RIFT_SHARD_ROOM: RoomTemplate = (() => {
+  const room: RoomTemplate = {
+    ...makeRoom('rift_shard', 'Rift Shard'),
+    biome: 'dark_void',
+  };
+  const W = room.width;
+  const H = room.height;
+
+  const trim = (x: number, y: number) => { room.tiles[y][x] = 2; };
+
+  // NW corner wedge
+  for (let y = 1; y <= 5; y++) {
+    for (let x = 1; x <= 6 - y; x++) trim(x, y);
+  }
+  // NE corner wedge
+  for (let y = 1; y <= 5; y++) {
+    for (let x = W - 2; x >= W - 7 + y; x--) trim(x, y);
+  }
+  // SW corner wedge
+  for (let y = H - 2; y >= H - 6; y--) {
+    const depth = y - 13;
+    for (let x = 1; x <= depth; x++) trim(x, y);
+  }
+  // SE corner wedge
+  for (let y = H - 2; y >= H - 6; y--) {
+    const depth = y - 13;
+    for (let x = W - 2; x >= W - 1 - depth; x--) trim(x, y);
+  }
+
+  room.playerSpawn = { x: 15, y: 16 };
+
+  room.decorations = [
+    // Outer altar plinths — large crystal formations anchor the four alcove
+    // quadrants. Collide, so placed well clear of the N/S/E/W door lanes.
+    { sprite: 'rift_crystal_formation', x: 7,  y: 5  },
+    { sprite: 'rift_crystal_formation', x: 22, y: 5  },
+    { sprite: 'rift_crystal_formation', x: 7,  y: 14 },
+    { sprite: 'rift_crystal_formation', x: 22, y: 14 },
+
+    // Inner wards — tall rift shards marking the sacred diamond around the
+    // central trinket pedestal. Non-colliding so the player can approach freely.
+    { sprite: 'rift_crystal_shard', x: 11, y: 6  },
+    { sprite: 'rift_crystal_shard', x: 18, y: 6  },
+    { sprite: 'rift_crystal_shard', x: 11, y: 13 },
+    { sprite: 'rift_crystal_shard', x: 18, y: 13 },
+
+    // Stone-set crystal outcrops in the apse alcove edges — wall-hugging
+    // accents that reinforce the corner carve silhouette.
+    { sprite: 'rift_crystal_outcrop', x: 3,  y: 3  },
+    { sprite: 'rift_crystal_outcrop', x: 26, y: 3  },
+    { sprite: 'rift_crystal_outcrop', x: 3,  y: 16 },
+    { sprite: 'rift_crystal_outcrop', x: 26, y: 16 },
+
+    // Small crystal clusters — scattered ambient shard fragments on the
+    // obsidian floor, ground-level accents with no collision.
+    { sprite: 'rift_crystal_cluster', x: 5,  y: 9  },
+    { sprite: 'rift_crystal_cluster', x: 24, y: 9  },
+    { sprite: 'rift_crystal_cluster', x: 5,  y: 10 },
+    { sprite: 'rift_crystal_cluster', x: 24, y: 10 },
+    { sprite: 'rift_crystal_cluster', x: 10, y: 2  },
+    { sprite: 'rift_crystal_cluster', x: 19, y: 2  },
+    { sprite: 'rift_crystal_cluster', x: 10, y: 17 },
+    { sprite: 'rift_crystal_cluster', x: 19, y: 17 },
+
+    // Stepping stones — ritual path flanking the approach from the south door.
+    { sprite: 'stepping_stone', x: 13, y: 17 },
+    { sprite: 'stepping_stone', x: 16, y: 17 },
+    { sprite: 'stepping_stone', x: 13, y: 14 },
+    { sprite: 'stepping_stone', x: 16, y: 14 },
+  ];
+
+  return applyOverride('rift_shard', {
+    ...room,
+    __editorKey: 'rift_shard',
+  } as RoomTemplate & { __editorKey: string });
+})();
 
 // --- Start room: player entry, no enemies ---
 export const START_ROOM: RoomTemplate = applyOverride('start', {
@@ -721,14 +837,156 @@ export const LAVA_TEST_ROOM: RoomTemplate = (() => {
   } as RoomTemplate & { __editorKey: string });
 })();
 
-// Named test rooms — used by direct-load debug mode (?testRoom=<key>).
-// Add new entries here when you want a room to be directly loadable from a URL.
-export const TEST_ROOMS: Record<string, RoomTemplate> = {
-  dark_forest: DARK_FOREST_TEST_ROOM,
-  plains: PLAINS_TEST_ROOM,
-  dark_lava: LAVA_TEST_ROOM,
-  lava: LAVA_ROOM,
-};
+// --- Dark Badlands test room: biome showcase for ?testRoom=dark_badlands ---
+// Warm-toned rocky biome — cracked desert floor with dark basalt boulder
+// outcrops. Home for earth/rock riftlings. The walls are scattered boulder
+// clusters rather than a continuous ridge, so the arena reads as "open
+// badlands with cover" instead of a walled canyon.
+export const BADLANDS_TEST_ROOM: RoomTemplate = (() => {
+  const room: RoomTemplate = {
+    ...makeRoom('start', 'Sunbleached Badlands (Test)'),
+    biome: 'dark_badlands',
+  };
+  // NW boulder cluster — chunky L
+  room.tiles[3][4]  = 2;
+  room.tiles[3][5]  = 2;
+  room.tiles[4][4]  = 2;
+  // N-center isolated pair
+  room.tiles[3][14] = 2;
+  room.tiles[4][14] = 2;
+  // NE boulder cluster — small 2x2
+  room.tiles[3][24] = 2;
+  room.tiles[3][25] = 2;
+  room.tiles[4][24] = 2;
+  room.tiles[4][25] = 2;
+  // Center outcrop — single focal boulder
+  room.tiles[9][15] = 2;
+  room.tiles[10][15] = 2;
+  // SW cluster
+  room.tiles[14][5] = 2;
+  room.tiles[15][5] = 2;
+  room.tiles[15][6] = 2;
+  // SE ridge
+  room.tiles[15][22] = 2;
+  room.tiles[15][23] = 2;
+  room.tiles[16][22] = 2;
+  room.tiles[16][23] = 2;
+  room.tiles[16][24] = 2;
+
+  room.decorations = [
+    // NW composition — cracked boulder anchor + cluster + small scatter
+    { sprite: 'badlands_cracked_boulder', x: 8,  y: 5  },
+    { sprite: 'badlands_rock_cluster',    x: 10, y: 6  },
+    { sprite: 'badlands_small_rock',      x: 7,  y: 7  },
+    { sprite: 'badlands_small_rock',      x: 9,  y: 8  },
+    // N-center — rubble trailing from the isolated bluff pair
+    { sprite: 'badlands_small_rock',      x: 13, y: 6  },
+    { sprite: 'badlands_rock_cluster',    x: 15, y: 7  },
+    { sprite: 'badlands_small_rock',      x: 16, y: 5  },
+    // NE composition — boulder flanking the 2x2 bluff
+    { sprite: 'badlands_cracked_boulder', x: 21, y: 6  },
+    { sprite: 'badlands_small_rock',      x: 22, y: 8  },
+    { sprite: 'badlands_rock_cluster',    x: 19, y: 4  },
+    // Center — accent around the focal boulder
+    { sprite: 'badlands_small_rock',      x: 14, y: 10 },
+    { sprite: 'badlands_small_rock',      x: 17, y: 11 },
+    { sprite: 'badlands_rock_cluster',    x: 12, y: 12 },
+    // SW composition
+    { sprite: 'badlands_cracked_boulder', x: 8,  y: 14 },
+    { sprite: 'badlands_small_rock',      x: 3,  y: 13 },
+    { sprite: 'badlands_small_rock',      x: 10, y: 16 },
+    // SE composition — cluster bridging the ridge
+    { sprite: 'badlands_rock_cluster',    x: 20, y: 14 },
+    { sprite: 'badlands_small_rock',      x: 25, y: 15 },
+    { sprite: 'badlands_small_rock',      x: 18, y: 16 },
+    // Sparse ambient scatter
+    { sprite: 'badlands_small_rock',      x: 5,  y: 17 },
+    { sprite: 'badlands_small_rock',      x: 24, y: 3  },
+  ];
+
+  return applyOverride('dark_badlands', {
+    ...room,
+    __editorKey: 'dark_badlands',
+  } as RoomTemplate & { __editorKey: string });
+})();
+
+// --- Dark Jungle test room: biome showcase for ?testRoom=dark_jungle ---
+// Dense rift-jungle with tangled vine thickets for cover. Wall clusters are
+// "impassable overgrowth" rather than stone — arena reads as scattered
+// thickets in a mossy clearing. Home for vine/ambush-type riftlings.
+export const JUNGLE_TEST_ROOM: RoomTemplate = (() => {
+  const room: RoomTemplate = {
+    ...makeRoom('start', 'Tangled Rift Hollow (Test)'),
+    biome: 'dark_jungle',
+  };
+  // NW thicket
+  room.tiles[4][5]  = 2;
+  room.tiles[4][6]  = 2;
+  room.tiles[5][5]  = 2;
+  // N-center vine pillar
+  room.tiles[3][14] = 2;
+  room.tiles[3][15] = 2;
+  room.tiles[4][15] = 2;
+  // NE thicket
+  room.tiles[4][23] = 2;
+  room.tiles[5][23] = 2;
+  room.tiles[5][24] = 2;
+  // Center focal thicket — forces flanking
+  room.tiles[9][14] = 2;
+  room.tiles[9][15] = 2;
+  room.tiles[10][14] = 2;
+  room.tiles[10][15] = 2;
+  // SW thicket
+  room.tiles[14][5] = 2;
+  room.tiles[15][5] = 2;
+  room.tiles[15][6] = 2;
+  // SE thicket
+  room.tiles[14][23] = 2;
+  room.tiles[15][23] = 2;
+  room.tiles[15][24] = 2;
+
+  room.decorations = [
+    // NW composition — twisted tree anchor with fern understory and shrooms
+    { sprite: 'twisted_dark_tree', x: 3,  y: 6  },
+    { sprite: 'giant_fern',        x: 7,  y: 8  },
+    { sprite: 'glowing_mushroom',  x: 8,  y: 5  },
+    { sprite: 'tall_grass_dark',   x: 5,  y: 9  },
+    { sprite: 'tall_grass_dark',   x: 3,  y: 9  },
+    // N-center — hollow log beside the vine pillar, shrooms on the dark side
+    { sprite: 'hollow_log',        x: 13, y: 6  },
+    { sprite: 'giant_fern',        x: 11, y: 5  },
+    { sprite: 'glowing_mushroom',  x: 17, y: 4  },
+    // NE composition — corrupted tree focal, ferns spilling out
+    { sprite: 'corrupted_tree',    x: 21, y: 6  },
+    { sprite: 'giant_fern',        x: 25, y: 5  },
+    { sprite: 'tall_grass_dark',   x: 24, y: 8  },
+    { sprite: 'glowing_mushroom',  x: 22, y: 8  },
+    // Center focal thicket — ring of ferns and shrooms around the cover pillar
+    { sprite: 'giant_fern',        x: 12, y: 11 },
+    { sprite: 'giant_fern',        x: 17, y: 11 },
+    { sprite: 'glowing_mushroom',  x: 14, y: 12 },
+    { sprite: 'tall_grass_dark',   x: 16, y: 8  },
+    // SW composition — fallen log anchor + understory
+    { sprite: 'hollow_log',        x: 3,  y: 13 },
+    { sprite: 'giant_fern',        x: 7,  y: 14 },
+    { sprite: 'glowing_mushroom',  x: 5,  y: 15 },
+    { sprite: 'tall_grass_dark',   x: 9,  y: 16 },
+    // SE composition — twisted tree pair with ferns
+    { sprite: 'twisted_dark_tree', x: 20, y: 13 },
+    { sprite: 'giant_fern',        x: 25, y: 14 },
+    { sprite: 'tall_grass_dark',   x: 22, y: 16 },
+    { sprite: 'glowing_mushroom',  x: 18, y: 15 },
+    // Sparse ambient scatter across the open floor
+    { sprite: 'tall_grass_dark',   x: 10, y: 14 },
+    { sprite: 'tall_grass_dark',   x: 19, y: 9  },
+    { sprite: 'glowing_mushroom',  x: 26, y: 11 },
+  ];
+
+  return applyOverride('dark_jungle', {
+    ...room,
+    __editorKey: 'dark_jungle',
+  } as RoomTemplate & { __editorKey: string });
+})();
 
 // --- Hub room: narrow vertical hall ---
 //
@@ -804,19 +1062,133 @@ export const HUB_ROOM: RoomTemplate = (() => {
     tiles.push(row);
   }
 
-  return {
+  // Hand-authored path mask. The hub renders as a forest clearing with
+  // a dirt-trail wang overlay on top of the dark_forest grass, leading
+  // from the central rift-crystal spring out to every door slot.
+  //
+  //        [slot 6]   [slot 7]
+  //     +-----T------T-----+
+  //     |     |      |     |
+  //   [s0]----+      +---[s3]
+  //     |          (plaza)  |
+  //   [s1]----+  [spring]   [s4]
+  //     |          +-----   |
+  //   [s2]----+      +---[s5]
+  //     |     |            |
+  //     +-----S------+-----+
+  //         [intro return]
+  const paths: number[][] = [];
+  for (let y = 0; y < H; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < W; x++) row.push(0);
+    paths.push(row);
+  }
+  const mark = (x: number, y: number) => {
+    if (x >= 0 && x < W && y >= 0 && y < H) paths[y][x] = 1;
+  };
+  // 5x5 plaza around the rift-crystal spring at (11, 13)
+  for (let y = 11; y <= 15; y++) {
+    for (let x = 9; x <= 13; x++) mark(x, y);
+  }
+  // West trunk: plaza -> west spine along y=13
+  for (let x = 1; x <= 8; x++) mark(x, 13);
+  // West spine: vertical corridor connecting slots 0/1/2
+  for (let y = 5; y <= 21; y++) mark(1, y);
+  mark(2, 5); mark(2, 6); // widen the slot-0 landing
+  mark(2, 13); mark(2, 14); // widen the slot-1 landing
+  mark(2, 20); mark(2, 21); // widen the slot-2 landing
+  // East trunk: plaza -> east spine along y=13
+  for (let x = 14; x <= 20; x++) mark(x, 13);
+  // East spine: vertical corridor connecting slots 3/4/5
+  for (let y = 5; y <= 21; y++) mark(20, y);
+  mark(19, 5); mark(19, 6);
+  mark(19, 13); mark(19, 14);
+  mark(19, 20); mark(19, 21);
+  // North trunk: plaza -> north wall along x=11
+  for (let y = 1; y <= 10; y++) mark(11, y);
+  // North branches east and west along y=1 to reach slots 6 and 7
+  for (let x = 6; x <= 15; x++) mark(x, 1);
+  mark(6, 2); mark(7, 2); // widen slot-6 landing
+  mark(14, 2); mark(15, 2); // widen slot-7 landing
+  // South trunk: plaza -> intro return along x=11
+  for (let y = 16; y <= 24; y++) mark(11, y);
+  mark(10, 23); mark(10, 24); // widen the intro landing
+
+  // Decorative props — hand-placed corner groves, mid-wall tree accents,
+  // rift-crystal shards ringing the spring, and a few understory details.
+  // All coordinates avoid path tiles except the plaza crystals, which sit
+  // on path corners around the spring by design.
+  const decorations: Decoration[] = [
+    // NW grove
+    { sprite: 'twisted_dark_tree', x: 4,  y: 4  },
+    { sprite: 'dark_pine_tree',    x: 6,  y: 3  },
+    { sprite: 'twisted_dark_tree', x: 3,  y: 7  },
+    // NE grove
+    { sprite: 'dark_pine_tree',    x: 17, y: 4  },
+    { sprite: 'twisted_dark_tree', x: 19, y: 3  },
+    { sprite: 'dark_pine_tree',    x: 18, y: 7  },
+    // SW grove
+    { sprite: 'twisted_dark_tree', x: 4,  y: 23 },
+    { sprite: 'dark_pine_tree',    x: 6,  y: 24 },
+    { sprite: 'twisted_dark_tree', x: 3,  y: 18 },
+    // SE grove
+    { sprite: 'dark_pine_tree',    x: 17, y: 23 },
+    { sprite: 'twisted_dark_tree', x: 19, y: 24 },
+    { sprite: 'dark_pine_tree',    x: 18, y: 18 },
+    // Mid-wall accents — fill the gaps between door spokes so the clearing
+    // reads as a bounded grove, not an empty square.
+    { sprite: 'hollow_log',     x: 5,  y: 10 },
+    { sprite: 'hollow_log',     x: 17, y: 16 },
+    { sprite: 'corrupted_tree', x: 4,  y: 14 },
+    { sprite: 'corrupted_tree', x: 18, y: 14 },
+    // Understory detail — glowing mushrooms near the groves
+    { sprite: 'glowing_mushroom', x: 5,  y: 6  },
+    { sprite: 'glowing_mushroom', x: 17, y: 6  },
+    { sprite: 'glowing_mushroom', x: 5,  y: 21 },
+    { sprite: 'glowing_mushroom', x: 16, y: 21 },
+    // Rift-crystal shards ringing the spring at the plaza corners. Non-
+    // colliding so the player can walk onto any plaza tile to trigger heal.
+    { sprite: 'rift_crystal_shard',   x: 9,  y: 11 },
+    { sprite: 'rift_crystal_shard',   x: 13, y: 11 },
+    { sprite: 'rift_crystal_shard',   x: 9,  y: 15 },
+    { sprite: 'rift_crystal_shard',   x: 13, y: 15 },
+    { sprite: 'rift_crystal_cluster', x: 11, y: 11 },
+    { sprite: 'rift_crystal_cluster', x: 11, y: 15 },
+  ];
+
+  const base: RoomTemplate = {
     name: 'Hub',
     type: 'hub',
     width: W,
     height: H,
     tiles,
+    biome: 'dark_forest',
+    paths,
+    decorations,
     enemySpawns: [],
     // Arrival from the intro puts the player near the south door — spawn
     // just north of the intro doorway so they step into the hall.
     playerSpawn: { x: 10, y: 23 },
     hubDoorSlots: slots,
   };
+  return applyOverride('hub', {
+    ...base,
+    __editorKey: 'hub',
+  } as RoomTemplate & { __editorKey: string });
 })();
+
+// Named test rooms — used by direct-load debug mode (?testRoom=<key>).
+// Add new entries here when you want a room to be directly loadable from a URL.
+export const TEST_ROOMS: Record<string, RoomTemplate> = {
+  dark_forest: DARK_FOREST_TEST_ROOM,
+  plains: PLAINS_TEST_ROOM,
+  dark_lava: LAVA_TEST_ROOM,
+  lava: LAVA_ROOM,
+  dark_badlands: BADLANDS_TEST_ROOM,
+  dark_jungle: JUNGLE_TEST_ROOM,
+  dark_void: RIFT_SHARD_ROOM,
+  hub: HUB_ROOM,
+};
 
 // All templates by type for dungeon generation
 export const ROOM_TEMPLATES: Record<RoomType, RoomTemplate[]> = {

@@ -5,7 +5,7 @@
  * The party persists within a run but resets between runs.
  */
 
-export type Role = 'chaser' | 'anchor' | 'skirmisher' | 'hunter';
+export type Role = 'vanguard' | 'skirmisher' | 'striker' | 'caster' | 'hunter' | 'support' | 'hexer';
 
 // --- Base stat ranges ---
 
@@ -140,6 +140,12 @@ export interface Move {
   phasesBeforeStrike?: boolean;
   /** Spin kind: applies slow to every enemy hit in the radius. */
   appliesSlowToAllHit?: boolean;
+  /** Animation key slug to play on the attacker when this move fires. */
+  attackAnim?: string;
+  /** Ms to wait after the attack animation starts before spawning the projectile/effect. */
+  attackAnimDelay?: number;
+  /** Pixel offset for the projectile/beam spawn Y position (negative = up). */
+  attackOriginOffsetY?: number;
 }
 
 export interface PartyRiftling {
@@ -172,6 +178,20 @@ export interface PartyRiftling {
   temperament: Temperament;
 }
 
+/**
+ * Per-species sprite scale multiplier. Applied on top of the site-local base
+ * scale at every sprite creation site. Default is 1 when a species isn't
+ * listed. Use this to normalize species whose source artwork is a bit larger
+ * or smaller than the rest of the roster.
+ */
+export const SPECIES_SPRITE_SCALE: Record<string, number> = {
+  gloomfang: 0.85,
+};
+
+export function speciesScale(texturePrefix: string): number {
+  return SPECIES_SPRITE_SCALE[texturePrefix] ?? 1;
+}
+
 /** Riftling templates — base stats for each species */
 export const RIFTLING_TEMPLATES: Record<
   string,
@@ -181,7 +201,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Emberhound',
     texturePrefix: 'emberhound',
     elementType: 'fire',
-    role: 'chaser',
+    role: 'skirmisher',
     maxHp: 80,
     attack: 6,
     defense: 1,
@@ -209,7 +229,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Pyreshell',
     texturePrefix: 'pyreshell',
     elementType: 'fire',
-    role: 'anchor',
+    role: 'vanguard',
     maxHp: 110,
     attack: 4,
     defense: 5,
@@ -228,8 +248,8 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 0,    max: 1    },
     },
     moves: [
-      { name: 'Magma Slam', power: 7, cooldown: 5, description: 'Heavy shell-slam that leaves a burning mark on the target', isSignature: false, kind: 'strike', appliesIgnite: 1 },
-      { name: 'Eruption', power: 9, cooldown: 20, description: 'Shell erupts in a molten blast, igniting every enemy caught in the radius', isSignature: true, kind: 'blast', radius: 45, appliesIgnite: 3 },
+      { name: 'Magma Slam', power: 7, cooldown: 5, description: 'Heavy shell-slam that leaves a burning mark on the target', isSignature: false, kind: 'strike', appliesIgnite: 1, attackAnim: 'attack', attackAnimDelay: 200 },
+      { name: 'Eruption', power: 9, cooldown: 20, description: 'Shell erupts in a molten blast, igniting every enemy caught in the radius', isSignature: true, kind: 'blast', radius: 45, appliesIgnite: 3, attackAnim: 'attack', attackAnimDelay: 200 },
       { name: 'Lava Shield', power: 4, cooldown: 60, description: 'Pyreshell coats itself in molten armor, boosting defense and reflecting hits for 4 seconds', isSignature: false, kind: 'shield', duration: 4000, selfTarget: true, thornsAmount: 2 },
     ],
   },
@@ -237,7 +257,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Solarglare',
     texturePrefix: 'solarglare',
     elementType: 'light',
-    role: 'skirmisher',
+    role: 'caster',
     maxHp: 60,
     attack: 5,
     defense: 2,
@@ -256,16 +276,16 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 8,   max: 17   },
     },
     moves: [
-      { name: 'Light Lance', power: 6, cooldown: 4, description: 'Focused light shot that blinds the target, reducing their accuracy', isSignature: false, kind: 'strike', appliesBlind: 10, blindDuration: 2000, attackAnim: 'attack' },
-      { name: 'Solar Flare', power: 10, cooldown: 25, description: 'Fires a sustained beam of light in a straight line, scorching everything in its path for 3 seconds', isSignature: true, kind: 'beam' },
-      { name: 'Prism Shot', power: 4, cooldown: 3, description: 'Scatters light bolts that refract to nearby enemies', isSignature: false, kind: 'barrage', hits: 3, refracts: true, attackAnim: 'attack' },
+      { name: 'Light Lance', power: 6, cooldown: 4, description: 'Focused light shot that blinds the target, reducing their accuracy', isSignature: false, kind: 'strike', appliesBlind: 10, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 250, attackOriginOffsetY: -8 },
+      { name: 'Solar Flare', power: 10, cooldown: 25, description: 'Fires a sustained beam of light in a straight line, scorching everything in its path for 3 seconds', isSignature: true, kind: 'beam', attackOriginOffsetY: -8 },
+      { name: 'Prism Shot', power: 4, cooldown: 3, description: 'Scatters light bolts that refract to nearby enemies', isSignature: false, kind: 'barrage', hits: 3, refracts: true, attackAnim: 'attack', attackAnimDelay: 250, attackOriginOffsetY: -8 },
     ],
   },
   lumoth: {
     name: 'Lumoth',
     texturePrefix: 'lumoth',
     elementType: 'light',
-    role: 'skirmisher',
+    role: 'hexer',
     maxHp: 40,
     attack: 7,
     defense: 1,
@@ -293,7 +313,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Tidecrawler',
     texturePrefix: 'tidecrawler',
     elementType: 'water',
-    role: 'anchor',
+    role: 'vanguard',
     maxHp: 100,
     attack: 5,
     defense: 4,
@@ -349,7 +369,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Barkbiter',
     texturePrefix: 'barkbiter',
     elementType: 'nature',
-    role: 'chaser',
+    role: 'support',
     maxHp: 70,
     attack: 7,
     defense: 2,
@@ -377,7 +397,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Tremorhorn',
     texturePrefix: 'tremorhorn',
     elementType: 'earth',
-    role: 'anchor',
+    role: 'vanguard',
     maxHp: 120,
     attack: 6,
     defense: 6,
@@ -405,7 +425,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Hollowcrow',
     texturePrefix: 'hollowcrow',
     elementType: 'dark',
-    role: 'skirmisher',
+    role: 'striker',
     maxHp: 45,
     attack: 6,
     defense: 1,
@@ -433,7 +453,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Rivelet',
     texturePrefix: 'rivelet',
     elementType: 'water',
-    role: 'chaser',
+    role: 'skirmisher',
     maxHp: 65,
     attack: 7,
     defense: 2,
@@ -461,7 +481,7 @@ export const RIFTLING_TEMPLATES: Record<
     name: 'Grindscale',
     texturePrefix: 'grindscale',
     elementType: 'earth',
-    role: 'anchor',
+    role: 'vanguard',
     maxHp: 115,
     attack: 5,
     defense: 7,
@@ -735,7 +755,7 @@ export interface Party {
 
 export function createStartingParty(starterKey: string = 'emberhound'): Party {
   return {
-    active: [createRiftling(starterKey)],
+    active: [createRiftlingAtLevel(starterKey, 2)],
     bench: [],
     trinkets: { equipped: [], bag: [] },
   };

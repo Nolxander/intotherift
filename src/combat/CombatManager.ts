@@ -1,6 +1,15 @@
 import Phaser from 'phaser';
-import { PartyRiftling, Move, MoveKind, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, TYPE_COLORS } from '../data/party';
-import { TrinketInventory, getEquippedBuffs } from '../data/trinkets';
+import { PartyRiftling, Move, MoveKind, Role, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, TYPE_COLORS, speciesScale } from '../data/party';
+import { EliteTeamMember } from '../data/room_templates';
+import { TrinketInventory, getEquippedBuffs, getRoleBuffs } from '../data/trinkets';
+import {
+  getRoleDamageReduction, getAttackerDamageMultiplier, getRoleLifestealRatio,
+  getRoleHealMultiplier, getRoleAoERadiusMultiplier, getRoleDebuffDurationMultiplier,
+  getRoleSpeedMultiplier, isKitingRole,
+  VANGUARD_TAUNT_RADIUS, KITE_RADIUS, KITE_BACKSTEP_MULT,
+  HUNTER_RANGE_THRESHOLD, HUNTER_SCAN_RADIUS,
+  SUPPORT_REGEN_RADIUS, SUPPORT_REGEN_PER_TICK,
+} from './roles';
 import { SimpleNav, NavPoint, NAV_ARRIVAL_RADIUS, STUCK_WINDOW_MS, STUCK_THRESHOLD_PX } from '../data/nav';
 import { playWalkOrStatic, stopWalkAnim, directionFromVelocity, playAttackAnim, isPlayingAttackAnim } from '../data/anims';
 
@@ -30,6 +39,59 @@ const SETUP_WALK_SPEED = 100;
 const SETUP_ARRIVE_DIST = 6;
 /** Max time (ms) for the setup phase before forcing combat start. */
 const SETUP_TIMEOUT_MS = 2500;
+
+/** Build a MoveSlot from a Move definition. Shared between allies and elite enemies. */
+function buildMoveSlot(m: Move): MoveSlot {
+  return {
+    name: m.name,
+    power: m.power,
+    cooldownMs: m.cooldown * MOVE_CD_SCALE,
+    lastUsedTime: -Infinity,
+    isSignature: m.isSignature,
+    kind: m.kind,
+    radius: m.radius,
+    duration: m.duration,
+    hits: m.hits,
+    drainRatio: m.drainRatio,
+    appliesIgnite: m.appliesIgnite,
+    bonusPerIgnite: m.bonusPerIgnite,
+    repositions: m.repositions,
+    selfTarget: m.selfTarget,
+    thornsAmount: m.thornsAmount,
+    appliesBlind: m.appliesBlind,
+    blindDuration: m.blindDuration,
+    refracts: m.refracts,
+    selfBuffStat: m.selfBuffStat,
+    selfBuffAmount: m.selfBuffAmount,
+    selfBuffDuration: m.selfBuffDuration,
+    appliesStatDebuff: m.appliesStatDebuff,
+    debuffAmount: m.debuffAmount,
+    debuffDuration: m.debuffDuration,
+    dashThrough: m.dashThrough,
+    pullsTarget: m.pullsTarget,
+    selfHealFallback: m.selfHealFallback,
+    appliesBriar: m.appliesBriar,
+    briarDuration: m.briarDuration,
+    rootTarget: m.rootTarget,
+    stunsRadius: m.stunsRadius,
+    stunDuration: m.stunDuration,
+    grantsKnockbackImmunity: m.grantsKnockbackImmunity,
+    defenseScaledBonus: m.defenseScaledBonus,
+    grantsDamageReduction: m.grantsDamageReduction,
+    damageReductionDuration: m.damageReductionDuration,
+    appliesHuntersMark: m.appliesHuntersMark,
+    markBonus: m.markBonus,
+    markDuration: m.markDuration,
+    executeBonusPct: m.executeBonusPct,
+    shadowStep: m.shadowStep,
+    appliesSlowOnLand: m.appliesSlowOnLand,
+    phasesBeforeStrike: m.phasesBeforeStrike,
+    appliesSlowToAllHit: m.appliesSlowToAllHit,
+    attackAnim: m.attackAnim,
+    attackAnimDelay: m.attackAnimDelay,
+    attackOriginOffsetY: m.attackOriginOffsetY,
+  };
+}
 
 export interface StatusEffect {
   id: string;
@@ -87,6 +149,10 @@ export interface MoveSlot {
   appliesSlowToAllHit?: boolean;
   /** Animation key slug to play on the attacker when this move fires (e.g. 'strike', 'leap'). */
   attackAnim?: string;
+  /** Ms to wait after the attack animation starts before spawning the projectile/effect. */
+  attackAnimDelay?: number;
+  /** Pixel offset applied to the projectile/beam spawn Y position (negative = up). */
+  attackOriginOffsetY?: number;
 }
 
 export interface CombatUnit {
@@ -147,6 +213,8 @@ export interface CombatUnit {
   forcedTarget?: CombatUnit;
   /** Timestamp when forced target expires. */
   forcedTargetExpiry?: number;
+  /** Class/role — drives passive damage, healing, and AI bias hooks. */
+  role?: Role;
 }
 
 export interface DefeatedRiftling {
@@ -171,6 +239,7 @@ export class CombatManager {
   private _selectedAllyIndex = 0;
   private _xpEarned = 0;
   private regenTimer?: Phaser.Time.TimerEvent;
+  private supportAuraTimer?: Phaser.Time.TimerEvent;
 
   /** Pre-combat positioning phase state. */
   private setupPhase = false;
@@ -230,7 +299,24 @@ export class CombatManager {
     entrySide: 'north' | 'south' | 'east' | 'west' = 'south',
     trinkets?: TrinketInventory,
     nav?: SimpleNav,
+    eliteTeam?: EliteTeamMember[],
+    eliteTrainerPos?: { x: number; y: number },
+    /**
+     * Per-team-member formation positions in pixel coordinates, parallel to
+     * `eliteTeam`. When provided, these drive both the setup-phase destination
+     * and (implicitly) the initial spawn positions clustered around the
+     * trainer anchor. Required whenever `eliteTeam` is set.
+     */
+    eliteFormationPixels?: { x: number; y: number }[],
+    /**
+     * Species keys eligible for wild enemy rolls in this encounter. When
+     * provided, wild spawns draw only from this pool (used to enforce branch
+     * themes like "water branch only spawns water riftlings"). Falls back to
+     * AVAILABLE_RIFTLINGS when undefined or empty.
+     */
+    wildSpeciesPool?: string[],
   ): void {
+    const pool = (wildSpeciesPool && wildSpeciesPool.length > 0) ? wildSpeciesPool : AVAILABLE_RIFTLINGS;
     this.active = true;
     this.onRoomCleared = onCleared;
     this.enemies = [];
@@ -254,52 +340,7 @@ export class CombatManager {
       const moveSlots: MoveSlot[] = c.data.equipped
         .map((idx) => c.data.moves[idx])
         .filter(Boolean)
-        .map((m) => ({
-          name: m.name,
-          power: m.power,
-          cooldownMs: m.cooldown * MOVE_CD_SCALE,
-          lastUsedTime: -Infinity,
-          isSignature: m.isSignature,
-          kind: m.kind,
-          radius: m.radius,
-          duration: m.duration,
-          hits: m.hits,
-          drainRatio: m.drainRatio,
-          appliesIgnite: m.appliesIgnite,
-          bonusPerIgnite: m.bonusPerIgnite,
-          repositions: m.repositions,
-          selfTarget: m.selfTarget,
-          thornsAmount: m.thornsAmount,
-          appliesBlind: m.appliesBlind,
-          blindDuration: m.blindDuration,
-          refracts: m.refracts,
-          selfBuffStat: m.selfBuffStat,
-          selfBuffAmount: m.selfBuffAmount,
-          selfBuffDuration: m.selfBuffDuration,
-          appliesStatDebuff: m.appliesStatDebuff,
-          debuffAmount: m.debuffAmount,
-          debuffDuration: m.debuffDuration,
-          dashThrough: m.dashThrough,
-          pullsTarget: m.pullsTarget,
-          selfHealFallback: m.selfHealFallback,
-          appliesBriar: m.appliesBriar,
-          briarDuration: m.briarDuration,
-          rootTarget: m.rootTarget,
-          stunsRadius: m.stunsRadius,
-          stunDuration: m.stunDuration,
-          grantsKnockbackImmunity: m.grantsKnockbackImmunity,
-          defenseScaledBonus: m.defenseScaledBonus,
-          grantsDamageReduction: m.grantsDamageReduction,
-          damageReductionDuration: m.damageReductionDuration,
-          appliesHuntersMark: m.appliesHuntersMark,
-          markBonus: m.markBonus,
-          markDuration: m.markDuration,
-          executeBonusPct: m.executeBonusPct,
-          shadowStep: m.shadowStep,
-          appliesSlowOnLand: m.appliesSlowOnLand,
-          phasesBeforeStrike: m.phasesBeforeStrike,
-          appliesSlowToAllHit: m.appliesSlowToAllHit,
-        }));
+        .map(buildMoveSlot);
 
       this.allies.push({
         sprite: c.sprite,
@@ -335,6 +376,7 @@ export class CombatManager {
         damageReductionUntil: 0,
         markedDamageBonus: 0,
         markedUntil: 0,
+        role: c.data.role,
       });
     }
 
@@ -370,71 +412,158 @@ export class CombatManager {
       }
     }
 
-    // Apply equipped trinket stat buffs to all allies
+    // Apply equipped trinket stat buffs to all allies.
+    // this.allies was built 1:1 from `companions` above, so index i maps to companions[i].
     if (trinkets) {
       const tBuffs = getEquippedBuffs(trinkets);
-      for (const ally of this.allies) {
-        if (tBuffs.attack) ally.attack += tBuffs.attack;
-        if (tBuffs.defense) ally.defense += tBuffs.defense;
-        if (tBuffs.speed) ally.speed += tBuffs.speed;
-        if (tBuffs.critRate) ally.critRate += tBuffs.critRate;
-        if (tBuffs.evasion) ally.evasion += tBuffs.evasion;
-        if (tBuffs.hp) {
-          ally.maxHp += tBuffs.hp;
-          ally.hp += tBuffs.hp;
+      for (let i = 0; i < this.allies.length; i++) {
+        const ally = this.allies[i];
+        const roleBuffs = getRoleBuffs(trinkets, companions[i].data.role);
+        const merged = {
+          attack: (tBuffs.attack ?? 0) + (roleBuffs.attack ?? 0),
+          defense: (tBuffs.defense ?? 0) + (roleBuffs.defense ?? 0),
+          speed: (tBuffs.speed ?? 0) + (roleBuffs.speed ?? 0),
+          critRate: (tBuffs.critRate ?? 0) + (roleBuffs.critRate ?? 0),
+          evasion: (tBuffs.evasion ?? 0) + (roleBuffs.evasion ?? 0),
+          hp: (tBuffs.hp ?? 0) + (roleBuffs.hp ?? 0),
+        };
+        if (merged.attack) ally.attack += merged.attack;
+        if (merged.defense) ally.defense += merged.defense;
+        if (merged.speed) ally.speed += merged.speed;
+        if (merged.critRate) ally.critRate += merged.critRate;
+        if (merged.evasion) ally.evasion += merged.evasion;
+        if (merged.hp) {
+          ally.maxHp = Math.max(1, ally.maxHp + merged.hp);
+          ally.hp = Math.max(1, Math.min(ally.maxHp, ally.hp + merged.hp));
         }
+        if (ally.defense < 0) ally.defense = 0;
+        if (ally.evasion < 0) ally.evasion = 0;
       }
+    }
+
+    // Role passive: Support regen aura — once a second, allies within
+    // SUPPORT_REGEN_RADIUS of any alive Support tick HP. Same pattern as nature regen.
+    if (this.allies.some((a) => a.role === 'support')) {
+      this.supportAuraTimer = this.scene.time.addEvent({
+        delay: 1000,
+        loop: true,
+        callback: () => {
+          if (!this.active) return;
+          for (const supporter of this.allies) {
+            if (!supporter.alive || supporter.role !== 'support') continue;
+            for (const ally of this.allies) {
+              if (!ally.alive) continue;
+              const dx = ally.sprite.x - supporter.sprite.x;
+              const dy = ally.sprite.y - supporter.sprite.y;
+              if (Math.sqrt(dx * dx + dy * dy) <= SUPPORT_REGEN_RADIUS) {
+                ally.hp = Math.min(ally.maxHp, ally.hp + SUPPORT_REGEN_PER_TICK);
+              }
+            }
+          }
+        },
+      });
     }
 
     // Compute ally positions — spread out slightly near entry side
     this.formationTargets = this.computeAllyFormation(companions, roomPixelW, roomPixelH, entrySide);
 
-    // Compute scatter positions on the enemy half, then spawn enemies directly there
-    const scatterPositions = this.computeEnemyScatter(spawns.length, roomPixelW, roomPixelH, entrySide);
+    // Derive enemy level from difficulty so deeper rooms spawn higher-level riftlings,
+    // floored at the party's average level (never fall behind) and capped at
+    // partyLevel+2 so early terminals like the first elite don't overshoot the
+    // player by 4+ levels.
+    const avgPartyLevel =
+      companions.length > 0
+        ? companions.reduce((s, c) => s + c.data.level, 0) / companions.length
+        : 1;
+    const partyFloor = Math.floor(avgPartyLevel);
+    const enemyLevel = Math.max(
+      1,
+      Math.min(MAX_LEVEL, partyFloor + 2, Math.max(Math.round(difficulty), partyFloor)),
+    );
 
-    // Derive enemy level from difficulty so deeper rooms spawn higher-level riftlings.
-    // difficulty = (1 + roomsCleared * 0.6) * roomTypeBonus, so rounding gives a
-    // natural 1→MAX_LEVEL ramp across a full run.
-    const enemyLevel = Math.max(1, Math.min(MAX_LEVEL, Math.round(difficulty)));
+    // Elite encounters march from the trainer out to role-based formation
+    // positions supplied by the caller. Wild encounters scatter directly.
+    const isElite = !!(eliteTeam && eliteTeam.length > 0 && eliteFormationPixels);
+    let formationPositions: { x: number; y: number }[];
+    let initialPositions: { x: number; y: number }[];
+    if (isElite) {
+      formationPositions = eliteFormationPixels!;
+      const anchor = eliteTrainerPos ?? formationPositions[0];
+      initialPositions = formationPositions.map((_, i) => {
+        const angle = (i / Math.max(1, formationPositions.length)) * Math.PI * 2;
+        return {
+          x: anchor.x + Math.cos(angle) * 18,
+          y: anchor.y + Math.sin(angle) * 18,
+        };
+      });
+    } else {
+      const scatterPositions = this.computeEnemyScatter(spawns.length, roomPixelW, roomPixelH, entrySide);
+      formationPositions = scatterPositions;
+      initialPositions = scatterPositions;
+    }
 
-    for (let si = 0; si < spawns.length; si++) {
-      const pos = scatterPositions[si];
-      const riftlingKey = Phaser.Utils.Array.GetRandom(AVAILABLE_RIFTLINGS);
+    const unitCount = isElite ? eliteTeam!.length : spawns.length;
+    for (let si = 0; si < unitCount; si++) {
+      const pos = initialPositions[si];
+      const teamMember = isElite ? eliteTeam![si] : undefined;
+      const riftlingKey = teamMember
+        ? teamMember.riftlingKey
+        : Phaser.Utils.Array.GetRandom(pool);
 
       // Build stats from level-1 base (randomized per species ranges) grown to enemyLevel
       // via the same level-up logic player riftlings use — no separate scaling formula.
-      const riftling = createRiftlingAtLevel(riftlingKey, enemyLevel);
+      const memberLevel = Math.max(1, Math.min(MAX_LEVEL, enemyLevel + (teamMember?.levelBonus ?? 0)));
+      const riftling = createRiftlingAtLevel(riftlingKey, memberLevel);
 
       const sprite = this.scene.physics.add.sprite(pos.x, pos.y, `${riftling.texturePrefix}_south`);
 
-      const enemyScale = 0.7;
+      const enemyScale = 0.7 * speciesScale(riftling.texturePrefix);
       sprite.setScale(enemyScale);
       sprite.setDepth(10 + pos.y / 10);
       sprite.setCollideWorldBounds(true);
       sprite.body!.setSize(20, 20);
       this.scene.physics.add.collider(sprite, this.walls);
 
-      const maxHp = Math.floor(riftling.maxHp * WILD_HP_MULT);
+      // Elite members keep full player-style stats; wild enemies use the swarm nerfs.
+      const maxHp = isElite ? riftling.maxHp : Math.floor(riftling.maxHp * WILD_HP_MULT);
+      const atk = isElite ? riftling.attack : Math.floor(riftling.attack * WILD_ATK_MULT);
+      const def = isElite ? riftling.defense : Math.floor(riftling.defense * WILD_ATK_MULT);
+      const spd = isElite ? riftling.speed : Math.floor(riftling.speed * WILD_SPEED_MULT);
+      const crit = isElite ? riftling.critRate : Math.floor(riftling.critRate * 0.5);
+      const eva = isElite ? riftling.evasion : Math.floor(riftling.evasion * 0.3);
+
+      // Elite members equip moves from the species' move pool (same pool the player uses).
+      const eliteMoveSlots: MoveSlot[] | undefined = teamMember
+        ? (() => {
+            const picks = teamMember.equipped ?? [0, 1];
+            return picks
+              .map((idx) => riftling.moves[idx])
+              .filter(Boolean)
+              .map(buildMoveSlot);
+          })()
+        : undefined;
+
       const enemy: CombatUnit = {
         sprite,
         hpBar: this.scene.add.graphics().setDepth(200),
         hp: maxHp,
         maxHp,
-        attack: Math.floor(riftling.attack * WILD_ATK_MULT),
-        defense: Math.floor(riftling.defense * WILD_ATK_MULT),
-        speed: Math.floor(riftling.speed * WILD_SPEED_MULT),
+        attack: atk,
+        defense: def,
+        speed: spd,
         attackCooldown: Math.max(400, riftling.attackSpeed),
         lastAttackTime: 0,
         texturePrefix: riftling.texturePrefix,
         riftlingKey,
         scale: enemyScale,
         alive: true,
+        moveSlots: eliteMoveSlots,
         lastMoveIndex: -1,
         displayName: riftling.name,
         elementType: riftling.elementType,
         attackRange: riftling.attackRange,
-        critRate: Math.floor(riftling.critRate * 0.5),
-        evasion: Math.floor(riftling.evasion * 0.3),
+        critRate: crit,
+        evasion: eva,
         statusEffects: [],
         igniteStacks: 0,
         nextIgniteTick: 0,
@@ -448,12 +577,15 @@ export class CombatManager {
         damageReductionUntil: 0,
         markedDamageBonus: 0,
         markedUntil: 0,
+        role: riftling.role,
       };
       this.enemies.push(enemy);
     }
 
-    // Enemies are already at their positions — no walking needed
-    this.enemyFormationTargets = scatterPositions;
+    // Formation targets drive the setup-phase walk. For wild encounters these
+    // equal the initial positions (no visible walk); for elite encounters the
+    // squad marches from the trainer anchor out to authored lane positions.
+    this.enemyFormationTargets = formationPositions;
   }
 
   get isActive(): boolean {
@@ -602,18 +734,24 @@ export class CombatManager {
     } else {
       enemy.forcedTarget = undefined;
       enemy.forcedTargetExpiry = undefined;
-      // Find the nearest alive ally to target
+      // Vanguard soft taunt: if any vanguard ally is within VANGUARD_TAUNT_RADIUS,
+      // pick the nearest vanguard. Otherwise fall back to nearest ally overall.
+      let bestVanguardDist = VANGUARD_TAUNT_RADIUS;
+      let bestVanguard: CombatUnit | null = null;
       let bestDist = Infinity;
+      let bestAlly: CombatUnit | null = null;
       for (const ally of this.allies) {
         if (!ally.alive) continue;
         const adx = ally.sprite.x - enemy.sprite.x;
         const ady = ally.sprite.y - enemy.sprite.y;
         const d = Math.sqrt(adx * adx + ady * ady);
-        if (d < bestDist) {
-          bestDist = d;
-          target = ally;
+        if (d < bestDist) { bestDist = d; bestAlly = ally; }
+        if (ally.role === 'vanguard' && d < bestVanguardDist) {
+          bestVanguardDist = d;
+          bestVanguard = ally;
         }
       }
+      target = bestVanguard ?? bestAlly;
     }
     if (!target) return;
 
@@ -641,7 +779,11 @@ export class CombatManager {
         stopWalkAnim(enemy.sprite, enemy.texturePrefix, faceDir);
       }
       enemy.sprite.setVelocity(sep.vx, sep.vy);
-      if (time - enemy.lastAttackTime > enemy.attackCooldown) {
+      // Elite enemies with equipped moves use the same move-selection pipeline as
+      // allies; wild enemies fall through to the basic auto-attack.
+      if (enemy.moveSlots && enemy.moveSlots.length > 0) {
+        this.tryUseMove(enemy, target, time);
+      } else if (time - enemy.lastAttackTime > enemy.attackCooldown) {
         enemy.lastAttackTime = time;
         this.dealDamage(enemy, target);
       }
@@ -711,6 +853,33 @@ export class CombatManager {
       const fy = this._focusTarget.sprite.y - comp.sprite.y;
       targetDist = Math.sqrt(fx * fx + fy * fy);
       target = this._focusTarget;
+    } else if (comp.role === 'hunter') {
+      // Hunter bias: within HUNTER_SCAN_RADIUS, prefer the highest-attackRange enemy.
+      // If no high-range enemy is in scan radius, fall back to nearest.
+      let bestRangeScore = HUNTER_RANGE_THRESHOLD - 1;
+      let bestRanged: CombatUnit | null = null;
+      let bestRangedDist = Infinity;
+      let nearest: CombatUnit | null = null;
+      let nearestDist = Infinity;
+      for (const enemy of this.enemies) {
+        if (!enemy.alive) continue;
+        const dx = enemy.sprite.x - comp.sprite.x;
+        const dy = enemy.sprite.y - comp.sprite.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < nearestDist) { nearestDist = dist; nearest = enemy; }
+        if (dist <= HUNTER_SCAN_RADIUS && enemy.attackRange > bestRangeScore) {
+          bestRangeScore = enemy.attackRange;
+          bestRanged = enemy;
+          bestRangedDist = dist;
+        }
+      }
+      if (bestRanged) {
+        target = bestRanged;
+        targetDist = bestRangedDist;
+      } else {
+        target = nearest;
+        targetDist = nearestDist;
+      }
     } else {
       // Find nearest enemy
       for (const enemy of this.enemies) {
@@ -732,8 +901,24 @@ export class CombatManager {
 
     const sep = this.getSeparation(comp, this.allies);
 
+    // Role passive: Skirmisher "wounded animal" speed boost when below half HP
+    const moveSpeed = comp.speed * getRoleSpeedMultiplier(comp.role, comp.hp / Math.max(1, comp.maxHp));
+
+    // Role passive: Striker/Caster kite — find the closest enemy crowding us
+    let kiteFromX = 0, kiteFromY = 0, shouldKite = false;
+    if (isKitingRole(comp.role)) {
+      let crowdDist = KITE_RADIUS;
+      for (const enemy of this.enemies) {
+        if (!enemy.alive) continue;
+        const ex = enemy.sprite.x - comp.sprite.x;
+        const ey = enemy.sprite.y - comp.sprite.y;
+        const ed = Math.sqrt(ex * ex + ey * ey);
+        if (ed < crowdDist) { crowdDist = ed; kiteFromX = ex; kiteFromY = ey; shouldKite = true; }
+      }
+    }
+
     if (targetDist > comp.attackRange) {
-      const { nx, ny } = this.moveUnitToward(comp, target.sprite.x, target.sprite.y, comp.speed, time);
+      const { nx, ny } = this.moveUnitToward(comp, target.sprite.x, target.sprite.y, moveSpeed, time);
       // Blend separation into the nav velocity
       const body = comp.sprite.body as Phaser.Physics.Arcade.Body;
       body.setVelocity(body.velocity.x + sep.vx, body.velocity.y + sep.vy);
@@ -742,6 +927,22 @@ export class CombatManager {
       const dir = this.getDirection(vx !== 0 ? vx : nx, vy !== 0 ? vy : ny);
       this.unitLastDir.set(comp, dir);
       playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+    } else if (shouldKite) {
+      // Kiting backstep — walk directly away from the crowding enemy at reduced speed
+      const len = Math.max(1, Math.sqrt(kiteFromX * kiteFromX + kiteFromY * kiteFromY));
+      const backX = -(kiteFromX / len) * moveSpeed * KITE_BACKSTEP_MULT;
+      const backY = -(kiteFromY / len) * moveSpeed * KITE_BACKSTEP_MULT;
+      comp.sprite.setVelocity(backX + sep.vx, backY + sep.vy);
+      const dir = this.getDirection(backX, backY);
+      this.unitLastDir.set(comp, dir);
+      playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+      // Still attack while kiting
+      if (comp.moveSlots && comp.moveSlots.length > 0) {
+        this.tryUseMove(comp, target, time);
+      } else if (time - comp.lastAttackTime > comp.attackCooldown) {
+        comp.lastAttackTime = time;
+        this.dealDamage(comp, target);
+      }
     } else {
       // In attack range — face the target, stop walk anim, apply only separation drift
       const tdx = target.sprite.x - comp.sprite.x;
@@ -815,12 +1016,18 @@ export class CombatManager {
   private pickMoveTarget(unit: CombatUnit, slot: MoveSlot, nearestEnemy: CombatUnit, _time: number): CombatUnit | null {
     if (slot.selfTarget) return unit;
 
+    // Resolve "own team" and "opposing team" relative to the casting unit so
+    // support moves work for either side (player allies OR elite enemies).
+    const isUnitAlly = this.allies.includes(unit);
+    const teammates = isUnitAlly ? this.allies : this.enemies;
+    const opposingTeam = isUnitAlly ? this.enemies : this.allies;
+
     switch (slot.kind) {
       case 'heal': {
-        // Find lowest-HP ally below 60%
+        // Find lowest-HP teammate below 60%
         let lowestAlly: CombatUnit | null = null;
         let lowestRatio = 0.6;
-        for (const ally of this.allies) {
+        for (const ally of teammates) {
           if (!ally.alive) continue;
           const ratio = ally.hp / ally.maxHp;
           if (ratio < lowestRatio) {
@@ -833,10 +1040,10 @@ export class CombatManager {
         return lowestAlly;
       }
       case 'shield': {
-        // Target self or lowest-HP ally, skip if target already has shield
+        // Target self or lowest-HP teammate, skip if target already has shield
         let target: CombatUnit = unit;
         let lowestHp = unit.hp;
-        for (const ally of this.allies) {
+        for (const ally of teammates) {
           if (!ally.alive) continue;
           if (ally.hp < lowestHp && !ally.statusEffects.some((e) => e.id === 'shield')) {
             lowestHp = ally.hp;
@@ -848,9 +1055,9 @@ export class CombatManager {
         return target;
       }
       case 'rally_buff': {
-        // Check if any nearby ally lacks the buff
+        // Check if any nearby teammate lacks the buff
         let hasUnbuffedAlly = false;
-        for (const ally of this.allies) {
+        for (const ally of teammates) {
           if (!ally.alive) continue;
           const dx = ally.sprite.x - unit.sprite.x;
           const dy = ally.sprite.y - unit.sprite.y;
@@ -863,24 +1070,21 @@ export class CombatManager {
         return hasUnbuffedAlly ? unit : null; // target is self (rally buffs from caster)
       }
       case 'leap': {
-        // Hunter targeting: pick the enemy with the highest attackRange above the
-        // backline threshold. This is a stable proxy for "ranged/backline unit" and
-        // prevents hunters from looping back to frontline melee units after landing.
+        // Hunter targeting: pick the opposing unit with the highest attackRange
+        // above the backline threshold. Stable proxy for "ranged/backline unit".
         const BACKLINE_RANGE_THRESHOLD = 60;
-        const leapEnemies = this.allies.includes(unit) ? this.enemies : this.allies;
         let leapTarget: CombatUnit | null = null;
         let bestRange = BACKLINE_RANGE_THRESHOLD;
-        for (const e of leapEnemies) {
+        for (const e of opposingTeam) {
           if (!e.alive) continue;
           if (e.attackRange > bestRange) { bestRange = e.attackRange; leapTarget = e; }
         }
         return leapTarget;
       }
       case 'spin': {
-        // Fire when at least one enemy is within the spin radius
+        // Fire when at least one opposing unit is within the spin radius
         const spinRadius = slot.radius ?? 50;
-        const spinEnemies = this.allies.includes(unit) ? this.enemies : this.allies;
-        for (const e of spinEnemies) {
+        for (const e of opposingTeam) {
           if (!e.alive) continue;
           if (Phaser.Math.Distance.Between(unit.sprite.x, unit.sprite.y, e.sprite.x, e.sprite.y) <= spinRadius) {
             return unit; // target self — executeSpin handles its own geometry
@@ -889,9 +1093,9 @@ export class CombatManager {
         return null;
       }
       case 'taunt': {
-        // Check if 2+ enemies are nearby without forced target on this unit
+        // Check if 2+ opposing units are nearby without forced target on this unit
         let nearbyCount = 0;
-        for (const enemy of this.enemies) {
+        for (const enemy of opposingTeam) {
           if (!enemy.alive) continue;
           const dx = enemy.sprite.x - unit.sprite.x;
           const dy = enemy.sprite.y - unit.sprite.y;
@@ -1111,7 +1315,8 @@ export class CombatManager {
   // --- Blind system ---
 
   /** Apply or refresh a blind debuff on a unit. Stacks take the max of current and new. */
-  private applyBlind(unit: CombatUnit, missChance: number, duration: number): void {
+  private applyBlind(unit: CombatUnit, missChance: number, duration: number, caster?: CombatUnit): void {
+    duration = Math.floor(duration * getRoleDebuffDurationMultiplier(caster?.role));
     unit.blindMissChance = Math.max(unit.blindMissChance, missChance);
     unit.blindExpiresAt = Math.max(unit.blindExpiresAt, this.scene.time.now + duration);
 
@@ -1164,7 +1369,7 @@ export class CombatManager {
    */
   private executeBeam(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
     const sx = attacker.sprite.x;
-    const sy = attacker.sprite.y;
+    const sy = attacker.sprite.y + (slot.attackOriginOffsetY ?? 0);
     const dx = target.sprite.x - sx;
     const dy = target.sprite.y - sy;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -1226,7 +1431,8 @@ export class CombatManager {
   // --- Briar debuff ---
 
   /** Apply briar to a unit — they take damage each time they attack. */
-  private applyBriar(unit: CombatUnit, damage: number, duration: number): void {
+  private applyBriar(unit: CombatUnit, damage: number, duration: number, caster?: CombatUnit): void {
+    duration = Math.floor(duration * getRoleDebuffDurationMultiplier(caster?.role));
     unit.briarDamage = Math.max(unit.briarDamage, damage);
     unit.briarExpiresAt = Math.max(unit.briarExpiresAt, this.scene.time.now + duration);
     unit.sprite.setTint(0x44cc44);
@@ -1240,7 +1446,8 @@ export class CombatManager {
    * Fully root a unit: zero their speed via status effect and push their lastAttackTime
    * forward so they can't attack until the root expires.
    */
-  private applyRoot(unit: CombatUnit, duration: number): void {
+  private applyRoot(unit: CombatUnit, duration: number, caster?: CombatUnit): void {
+    duration = Math.floor(duration * getRoleDebuffDurationMultiplier(caster?.role));
     const now = this.scene.time.now;
     // Zero speed via status effect so the AI won't move
     this.applyStatusEffect(unit, {
@@ -1336,24 +1543,25 @@ export class CombatManager {
   private applyStatDebuff(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot): void {
     if (!slot.appliesStatDebuff || !slot.debuffAmount || !target.alive) return;
     const debuffId = `debuff_${slot.appliesStatDebuff}`;
+    const baseDuration = slot.debuffDuration ?? 3000;
+    const duration = Math.floor(baseDuration * getRoleDebuffDurationMultiplier(attacker.role));
     const existing = target.statusEffects.find((e) => e.id === debuffId);
     if (existing) {
       // Refresh duration only — no additional stat penalty
-      existing.expiresAt = this.scene.time.now + (slot.debuffDuration ?? 3000);
+      existing.expiresAt = this.scene.time.now + duration;
       return;
     }
     this.applyStatusEffect(target, {
       id: debuffId,
       stat: slot.appliesStatDebuff,
       amount: -slot.debuffAmount,
-      expiresAt: this.scene.time.now + (slot.debuffDuration ?? 3000),
+      expiresAt: this.scene.time.now + duration,
     });
     const labels: Record<string, string> = { defense: 'DEF↓', attack: 'ATK↓', speed: 'SPD↓', evasion: 'EVA↓' };
     this.showFloatingText(target.sprite.x, target.sprite.y, labels[slot.appliesStatDebuff] ?? 'DEBUFF', '#88ccff', 9);
     // Blue-tint flash on target (waterlogged look)
     target.sprite.setTint(0x88aaff);
     this.scene.time.delayedCall(150, () => { if (target.alive) target.sprite.clearTint(); });
-    void attacker; // suppress unused warning
   }
 
   // --- Leap move (hunter backline jump) ---
@@ -1373,8 +1581,15 @@ export class CombatManager {
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
     const nx = dx / dist;
     const ny = dy / dist;
-    const landX = Phaser.Math.Clamp(target.sprite.x + nx * 32, 24, 456);
-    const landY = Phaser.Math.Clamp(target.sprite.y + ny * 32, 24, 296);
+    let landX = Phaser.Math.Clamp(target.sprite.x + nx * 32, 24, 456);
+    let landY = Phaser.Math.Clamp(target.sprite.y + ny * 32, 24, 296);
+    // Ensure the landing spot is walkable — without this a leap can deposit
+    // the attacker inside a wall or behind a tree collider.
+    if (this.nav) {
+      const snapped = this.nav.snapToWalkable(landX, landY);
+      landX = snapped.x;
+      landY = snapped.y;
+    }
 
     // Bezier arc — control points arc upward over the path
     const arcH = Math.min(70, dist * 0.45);
@@ -1598,7 +1813,7 @@ export class CombatManager {
    * simultaneously with melee damage + knockback radiating outward from the caster.
    */
   private executeSpin(attacker: CombatUnit, slot: MoveSlot, isAlly: boolean): void {
-    const radius = slot.radius ?? 50;
+    const radius = (slot.radius ?? 50) * getRoleAoERadiusMultiplier(attacker.role);
     const enemies = isAlly ? this.enemies : this.allies;
     const cx = attacker.sprite.x;
     const cy = attacker.sprite.y;
@@ -1641,9 +1856,10 @@ export class CombatManager {
         if (slot.appliesStatDebuff) this.applyStatDebuff(attacker, enemy, slot);
         if (slot.appliesSlowToAllHit) {
           const slowAmt = -Math.floor(enemy.speed * 0.4);
+          const slowDur = Math.floor((slot.duration ?? 3000) * getRoleDebuffDurationMultiplier(attacker.role));
           this.applyStatusEffect(enemy, {
             id: 'slow', stat: 'speed', amount: slowAmt,
-            expiresAt: this.scene.time.now + (slot.duration ?? 3000),
+            expiresAt: this.scene.time.now + slowDur,
           });
           enemy.sprite.setTint(0x44cccc);
           this.scene.time.delayedCall(200, () => { if (enemy.alive) enemy.sprite.clearTint(); });
@@ -1667,7 +1883,7 @@ export class CombatManager {
   private dealMoveDamage(attacker: CombatUnit, target: CombatUnit, slot: MoveSlot): void {
     const isAlly = this.allies.includes(attacker);
 
-    // Play attack animation on attacker if one is registered for this move
+    // Play attack animation immediately — effect fires after attackAnimDelay (or instantly)
     if (slot.attackAnim) {
       const dir = this.unitLastDir.get(attacker) ?? 'south';
       playAttackAnim(attacker.sprite, attacker.texturePrefix, slot.attackAnim, dir, this.scene.anims, () => {
@@ -1675,16 +1891,19 @@ export class CombatManager {
       });
     }
 
-    // Signature move polish: screen shake + white flash on attacker
-    if (slot.isSignature) {
-      this.scene.cameras.main.shake(150, 0.003);
-      attacker.sprite.setTint(0xffffff);
-      this.scene.time.delayedCall(100, () => {
-        if (attacker.alive) attacker.sprite.clearTint();
-      });
-    }
+    const fireEffect = () => {
+      if (!attacker.alive) return;
 
-    switch (slot.kind) {
+      // Signature move polish: screen shake + white flash on attacker
+      if (slot.isSignature) {
+        this.scene.cameras.main.shake(150, 0.003);
+        attacker.sprite.setTint(0xffffff);
+        this.scene.time.delayedCall(100, () => {
+          if (attacker.alive) attacker.sprite.clearTint();
+        });
+      }
+
+      switch (slot.kind) {
       case 'strike':
         this.executeDamageMove(attacker, target, slot, isAlly, false);
         break;
@@ -1735,6 +1954,13 @@ export class CombatManager {
       default:
         this.executeDamageMove(attacker, target, slot, isAlly, false);
     }
+    }; // end fireEffect
+
+    if (slot.attackAnimDelay) {
+      this.scene.time.delayedCall(slot.attackAnimDelay, fireEffect);
+    } else {
+      fireEffect();
+    }
   }
 
   /** Fire a single-target damage hit (used by strike and pierce). */
@@ -1753,13 +1979,13 @@ export class CombatManager {
       ? () => {
           if (!defender.alive) return;
           if (slot.appliesIgnite)    this.addIgniteStacks(defender, slot.appliesIgnite!);
-          if (slot.appliesBlind)     this.applyBlind(defender, slot.appliesBlind!, slot.blindDuration ?? 2000);
+          if (slot.appliesBlind)     this.applyBlind(defender, slot.appliesBlind!, slot.blindDuration ?? 2000, attacker);
           if (slot.appliesStatDebuff) this.applyStatDebuff(attacker, defender, slot);
         }
       : undefined;
 
     this.fireProjectileOrMelee(attacker, defender, damage, isAlly, label, slot.isSignature, pierce,
-      onHit, undefined, colorOverride, speed, colorOverride);
+      onHit, undefined, colorOverride, speed, colorOverride, slot.attackOriginOffsetY ?? 0);
   }
 
   /**
@@ -1777,8 +2003,13 @@ export class CombatManager {
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
     const nx = dx / dist;
     const ny = dy / dist;
-    const behindX = Phaser.Math.Clamp(target.sprite.x + nx * 36, 24, (this.walls.scene.sys.game.config.width as number) - 24);
-    const behindY = Phaser.Math.Clamp(target.sprite.y + ny * 36, 24, (this.walls.scene.sys.game.config.height as number) - 24);
+    let behindX = Phaser.Math.Clamp(target.sprite.x + nx * 36, 24, (this.walls.scene.sys.game.config.width as number) - 24);
+    let behindY = Phaser.Math.Clamp(target.sprite.y + ny * 36, 24, (this.walls.scene.sys.game.config.height as number) - 24);
+    if (this.nav) {
+      const snapped = this.nav.snapToWalkable(behindX, behindY);
+      behindX = snapped.x;
+      behindY = snapped.y;
+    }
 
     // Deliver the hit immediately (melee-range pierce)
     this.spawnImpactFlash(target.sprite.x, target.sprite.y, 0xeeeeff, slot.isSignature);
@@ -1813,7 +2044,7 @@ export class CombatManager {
     const variance = Math.floor(Math.random() * 4) - 2;
     const damage = Math.max(1, slot.power + variance);
     const label = isAlly ? `${slot.name} -${damage}` : `-${damage}`;
-    const radius = slot.radius ?? 45;
+    const radius = (slot.radius ?? 45) * getRoleAoERadiusMultiplier(attacker.role);
     const typeColor = TYPE_COLORS[attacker.elementType] ?? 0xffcc44;
     const enemies = isAlly ? this.enemies : this.allies;
 
@@ -1830,7 +2061,7 @@ export class CombatManager {
 
       // Apply ignite / blind to primary target
       if (slot.appliesIgnite && defender.alive) this.addIgniteStacks(defender, slot.appliesIgnite);
-      if (slot.appliesBlind  && defender.alive) this.applyBlind(defender, slot.appliesBlind, slot.blindDuration ?? 2000);
+      if (slot.appliesBlind  && defender.alive) this.applyBlind(defender, slot.appliesBlind, slot.blindDuration ?? 2000, attacker);
 
       // Hit secondary targets in radius
       const splashDamage = Math.floor(damage * 0.6);
@@ -1841,7 +2072,7 @@ export class CombatManager {
         if (Math.sqrt(dx * dx + dy * dy) <= radius) {
           this.applyHit(attacker, enemy, splashDamage, isAlly, `-${splashDamage}`);
           if (slot.appliesIgnite) this.addIgniteStacks(enemy, slot.appliesIgnite);
-          if (slot.appliesBlind)  this.applyBlind(enemy, slot.appliesBlind, slot.blindDuration ?? 2000);
+          if (slot.appliesBlind)  this.applyBlind(enemy, slot.appliesBlind, slot.blindDuration ?? 2000, attacker);
           if (slot.stunsRadius)   this.applyStun(enemy, slot.stunDuration ?? 800);
         }
       }
@@ -1877,7 +2108,7 @@ export class CombatManager {
         const onHit = (slot.refracts || slot.appliesBriar || slot.appliesStatDebuff) ? () => {
           if (slot.appliesStatDebuff && primary.alive) this.applyStatDebuff(attacker, primary, slot);
           if (slot.appliesBriar && primary.alive) {
-            this.applyBriar(primary, slot.appliesBriar, slot.briarDuration ?? 4000);
+            this.applyBriar(primary, slot.appliesBriar, slot.briarDuration ?? 4000, attacker);
           }
           if (slot.refracts && primary.alive) {
             let secondary: CombatUnit | null = null;
@@ -1898,7 +2129,7 @@ export class CombatManager {
           }
         } : undefined;
 
-        this.fireProjectileOrMelee(attacker, primary, damage, isAlly, label, false, false, onHit, 2);
+        this.fireProjectileOrMelee(attacker, primary, damage, isAlly, label, false, false, onHit, 2, undefined, 1, undefined, slot.attackOriginOffsetY ?? 0);
       });
     }
   }
@@ -1954,7 +2185,8 @@ export class CombatManager {
   /** Heal: restore HP to an ally. */
   private executeHeal(_attacker: CombatUnit, target: CombatUnit, slot: MoveSlot): void {
     const variance = Math.floor(Math.random() * 4) - 2;
-    const healAmount = Math.max(1, slot.power + variance);
+    const base = Math.max(1, slot.power + variance);
+    const healAmount = Math.max(1, Math.floor(base * getRoleHealMultiplier(_attacker.role)));
     target.hp = Math.min(target.maxHp, target.hp + healAmount);
 
     target.sprite.setTint(0x44ff66);
@@ -2031,9 +2263,10 @@ export class CombatManager {
     const onHit = () => {
       if (!defender.alive) return;
 
+      const hexedDuration = Math.floor(duration * getRoleDebuffDurationMultiplier(attacker.role));
       if (slot.rootTarget) {
         // Full root: speed → 0, attacks locked (Root Snap)
-        this.applyRoot(defender, duration);
+        this.applyRoot(defender, duration, attacker);
       } else {
         // Partial slow
         const slowAmount = -Math.floor(defender.speed * 0.4);
@@ -2041,13 +2274,13 @@ export class CombatManager {
           id: 'slow',
           stat: 'speed',
           amount: slowAmount,
-          expiresAt: this.scene.time.now + duration,
+          expiresAt: this.scene.time.now + hexedDuration,
         });
         defender.sprite.setTint(0x44cccc);
         this.scene.time.delayedCall(200, () => { if (defender.alive) defender.sprite.clearTint(); });
         this.showFloatingText(defender.sprite.x, defender.sprite.y, 'SLOWED', '#44cccc', 9);
-        if (slot.appliesBlind) this.applyBlind(defender, slot.appliesBlind, slot.blindDuration ?? 2000);
-        if (slot.appliesBriar) this.applyBriar(defender, slot.appliesBriar, slot.briarDuration ?? 4000);
+        if (slot.appliesBlind) this.applyBlind(defender, slot.appliesBlind, slot.blindDuration ?? 2000, attacker);
+        if (slot.appliesBriar) this.applyBriar(defender, slot.appliesBriar, slot.briarDuration ?? 4000, attacker);
       }
     };
 
@@ -2118,6 +2351,7 @@ export class CombatManager {
     isAlly: boolean, label: string, isSignature: boolean,
     pierce = false, onHitCallback?: () => void, projRadius?: number,
     projColorOverride?: number, speedMult = 1, impactColor?: number,
+    originOffsetY = 0,
   ): void {
     const aDist = Phaser.Math.Distance.Between(attacker.sprite.x, attacker.sprite.y, defender.sprite.x, defender.sprite.y);
 
@@ -2127,7 +2361,7 @@ export class CombatManager {
 
     if (aDist > 40) {
       const radius = projRadius ?? (isSignature ? 5 : 3);
-      const proj = this.scene.add.circle(attacker.sprite.x, attacker.sprite.y, radius, projColor).setDepth(250);
+      const proj = this.scene.add.circle(attacker.sprite.x, attacker.sprite.y + originOffsetY, radius, projColor).setDepth(250);
 
       // Pierce projectiles leave a fading trail
       if (pierce) {
@@ -2263,6 +2497,18 @@ export class CombatManager {
       isCrit = true;
     }
 
+    // Role passive: attacker damage multipliers (Striker high-HP bonus, Hunter range bonus)
+    const atkMult = getAttackerDamageMultiplier(
+      attacker.role,
+      defender.hp / Math.max(1, defender.maxHp),
+      defender.attackRange,
+    );
+    if (atkMult !== 1) damage = Math.max(1, Math.floor(damage * atkMult));
+
+    // Role passive: Vanguard incoming damage reduction
+    const vgDR = getRoleDamageReduction(defender.role);
+    if (vgDR > 0) damage = Math.max(1, Math.floor(damage * (1 - vgDR)));
+
     // Damage reduction (Iron Curl)
     if (defender.damageReductionAmount > 0 && this.scene.time.now < defender.damageReductionUntil) {
       damage = Math.max(1, Math.floor(damage * (1 - defender.damageReductionAmount)));
@@ -2274,6 +2520,13 @@ export class CombatManager {
     }
 
     defender.hp = Math.max(0, defender.hp - damage);
+
+    // Role passive: Skirmisher lifesteal
+    const lifesteal = getRoleLifestealRatio(attacker.role);
+    if (lifesteal > 0 && attacker.alive) {
+      const heal = Math.max(1, Math.floor(damage * lifesteal));
+      attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
+    }
 
     // Flash red (crits flash orange)
     defender.sprite.setTint(isCrit ? 0xff8800 : 0xff4444);
@@ -2677,10 +2930,13 @@ export class CombatManager {
 
     const targets: { x: number; y: number }[] = [];
     for (let i = 0; i < count; i++) {
-      targets.push({
+      const raw = {
         x: minX + Math.random() * (maxX - minX),
         y: minY + Math.random() * (maxY - minY),
-      });
+      };
+      // Snap to a walkable tile so enemies never spawn inside a wall or
+      // behind a decoration collider they can't path out of.
+      targets.push(this.nav ? this.nav.snapToWalkable(raw.x, raw.y) : raw);
     }
     return targets;
   }
@@ -2856,6 +3112,10 @@ export class CombatManager {
     if (this.regenTimer) {
       this.regenTimer.destroy();
       this.regenTimer = undefined;
+    }
+    if (this.supportAuraTimer) {
+      this.supportAuraTimer.destroy();
+      this.supportAuraTimer = undefined;
     }
     for (const enemy of this.enemies) {
       if (enemy.alive) {

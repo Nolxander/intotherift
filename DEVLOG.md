@@ -341,7 +341,7 @@ The player spawns with Emberhound and explores a 9-room dungeon. Combat rooms sp
 
 ### Recommended next steps (priority order)
 
-1. **More biome tilesets** — Import/generate Wang tilesets for water, fire/lava, dark, earth, light biomes and assign to room types.
+1. **More biome tilesets** — Import/generate Wang tilesets for additional environmental themes (water, lava, jungle, crystal, void, etc.) and assign to room types. Biomes are environmental, not tied to riftling types — any type can inhabit any biome.
 2. **Player commands** — Attack (Space), Rally (R), Unleash (Q). The ~4 inputs that define the control model.
 3. **Boss encounter** — Level 1 boss with distinct behavior. Beating the boss = run complete.
 4. **Game over / victory screens** — Timer expiry = run failed. Boss defeated = run won.

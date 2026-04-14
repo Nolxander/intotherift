@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { Party, PartyRiftling, Move, MoveKind, MAX_ACTIVE, MAX_BENCH, xpForLevel, MAX_LEVEL, StatKey } from '../data/party';
-import { TrinketDef, MAX_EQUIPPED, MAX_BAG, equipFromBag, unequipTrinket, swapTrinket } from '../data/trinkets';
+import { Party, PartyRiftling, Move, MoveKind, MAX_ACTIVE, MAX_BENCH, xpForLevel, MAX_LEVEL, StatKey, speciesScale } from '../data/party';
+import { TrinketDef, MAX_EQUIPPED, equipFromBag, unequipTrinket, swapTrinket } from '../data/trinkets';
 
 const W = 480;
 const H = 320;
@@ -24,9 +24,13 @@ const TYPE_COLORS_HEX: Record<string, string> = {
 };
 
 const ROLE_COLORS: Record<string, string> = {
-  chaser: '#ff6644',
-  anchor: '#6688cc',
+  vanguard: '#6688cc',
   skirmisher: '#44cc88',
+  striker: '#ff6644',
+  caster: '#cc66ff',
+  hunter: '#ffaa33',
+  support: '#88ddaa',
+  hexer: '#aa44cc',
 };
 
 const FONT = 'monospace';
@@ -188,7 +192,7 @@ export class PartyScreen {
       // Sprite icon
       const spriteKey = `${riftling.texturePrefix}_south`;
       if (this.scene.textures.exists(spriteKey)) {
-        const icon = this.scene.add.image(x + w / 2, y + h / 2 - 2, spriteKey).setScale(0.38);
+        const icon = this.scene.add.image(x + w / 2, y + h / 2 - 2, spriteKey).setScale(0.38 * speciesScale(riftling.texturePrefix));
         this.container.add(icon);
       }
 
@@ -290,7 +294,7 @@ export class PartyScreen {
     const spriteKey = `${riftling.texturePrefix}_south`;
     let spriteBottom = panelTop;
     if (this.scene.textures.exists(spriteKey)) {
-      const sprite = this.scene.add.image(px + 24, y + 32, spriteKey).setScale(1.5);
+      const sprite = this.scene.add.image(px + 24, y + 32, spriteKey).setScale(1.5 * speciesScale(riftling.texturePrefix));
       this.container.add(sprite);
       spriteBottom = sprite.y + sprite.displayHeight / 2;
     }

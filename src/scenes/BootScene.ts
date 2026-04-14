@@ -47,6 +47,26 @@ export class BootScene extends Phaser.Scene {
       this.load.image(`dark_lava_${i}`, `assets/tiles/dark_lava/wang_${i}.png`);
     }
 
+    // Biome tilesets (Wang tiles) — dark_badlands
+    for (let i = 0; i < 16; i++) {
+      this.load.image(`dark_badlands_${i}`, `assets/tiles/dark_badlands/wang_${i}.png`);
+    }
+
+    // Biome tilesets (Wang tiles) — dark_jungle
+    for (let i = 0; i < 16; i++) {
+      this.load.image(`dark_jungle_${i}`, `assets/tiles/dark_jungle/wang_${i}.png`);
+    }
+
+    // Biome tilesets (Wang tiles) — dark_void
+    for (let i = 0; i < 16; i++) {
+      this.load.image(`dark_void_${i}`, `assets/tiles/dark_void/wang_${i}.png`);
+    }
+
+    // Hub dirt-path overlay — layered on top of dark_forest in the hub room.
+    for (let i = 0; i < 16; i++) {
+      this.load.image(`hub_dirt_path_${i}`, `assets/tiles/hub_dirt_path/wang_${i}.png`);
+    }
+
     // Decoration props (imported map_objects). Texture key = catalog key.
     for (const def of Object.values(DECORATION_CATALOG)) {
       this.load.image(def.key, def.path);
@@ -146,13 +166,23 @@ export class BootScene extends Phaser.Scene {
       }
     }
 
-    // Pyreshell walk animation frames (4 dirs × 8 frames)
+    // Pyreshell walk + attack animation frames (4 dirs × 8 frames)
     const pyreshellWalkDirs = ['south', 'north', 'east', 'west'];
     for (const dir of pyreshellWalkDirs) {
       for (let f = 0; f < 8; f++) {
         this.load.image(
           `pyreshell_walk_${dir}_${f}`,
           `assets/sprites/pyreshell/animations/walk/${dir}/frame_00${f}.png`,
+        );
+      }
+    }
+
+    // Pyreshell attack animation frames (4 dirs × 8 frames)
+    for (const dir of pyreshellWalkDirs) {
+      for (let f = 0; f < 8; f++) {
+        this.load.image(
+          `pyreshell_atk_attack_${dir}_${f}`,
+          `assets/sprites/pyreshell/animations/atk_attack/${dir}/frame_00${f}.png`,
         );
       }
     }
@@ -273,6 +303,7 @@ export class BootScene extends Phaser.Scene {
     registerWalkAnims(this, 'gloomfang', 8, 16);
     registerWalkAnims(this, 'emberhound', 8, 14);
     registerWalkAnims(this, 'pyreshell', 8, 12);
+    registerAttackAnims(this, 'pyreshell', 'attack', 8);
     registerWalkAnims(this, 'grindscale', 8, 12);
     registerWalkAnims(this, 'solarglare', 8, 14);
     registerAttackAnims(this, 'solarglare', 'attack', 8);

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { DefeatedRiftling } from '../combat/CombatManager';
-import { createRiftling, PartyRiftling, RIFTLING_TEMPLATES, randomTemperament } from '../data/party';
+import { createRiftlingAtLevel, PartyRiftling, RIFTLING_TEMPLATES, speciesScale } from '../data/party';
 
 /**
  * Recruit prompt — shown after clearing a combat room.
@@ -25,7 +25,7 @@ export class RecruitPrompt {
     this.container.setVisible(false);
   }
 
-  show(defeated: DefeatedRiftling[], onChoice: (riftling: PartyRiftling | null) => void): void {
+  show(defeated: DefeatedRiftling[], onChoice: (riftling: PartyRiftling | null) => void, targetLevel: number = 1): void {
     // Deduplicate by key
     const seen = new Set<string>();
     this.options = defeated.filter((d) => {
@@ -44,7 +44,7 @@ export class RecruitPrompt {
     this.container.removeAll(true);
 
     // Pre-roll riftlings so temperaments are determined before display
-    this.prerolled = this.options.map((opt) => createRiftling(opt.riftlingKey));
+    this.prerolled = this.options.map((opt) => createRiftlingAtLevel(opt.riftlingKey, targetLevel));
 
     const W = 480;
     const H = 320;
@@ -76,7 +76,8 @@ export class RecruitPrompt {
 
       // Sprite preview
       const sprite = this.scene.add.image(x, y, `${opt.texturePrefix}_south`);
-      sprite.setScale(1.5);
+      const baseScale = 1.5 * speciesScale(opt.texturePrefix);
+      sprite.setScale(baseScale);
       this.container.add(sprite);
 
       // Name
@@ -134,16 +135,33 @@ export class RecruitPrompt {
         })
         .setOrigin(0.5);
       this.container.add(keyHint);
+
+      // Click hit area covering the whole card
+      const cardIndex = i;
+      const hit = this.scene.add
+        .rectangle(x, y + 38, 92, 124, 0x000000, 0)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerover', () => sprite.setScale(baseScale * 1.13));
+      hit.on('pointerout', () => sprite.setScale(baseScale));
+      hit.on('pointerdown', () => this.selectOption(cardIndex));
+      this.container.add(hit);
     }
 
-    // Skip hint
+    // Skip hint — clickable
     const skip = this.scene.add
       .text(W / 2, H - 40, '[ESC] Skip', {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#888888',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    skip.on('pointerover', () => skip.setColor('#ffffff'));
+    skip.on('pointerout', () => skip.setColor('#888888'));
+    skip.on('pointerdown', () => {
+      this.hide();
+      this.onChoice(null);
+    });
     this.container.add(skip);
 
     this.container.setVisible(true);

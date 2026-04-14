@@ -25,6 +25,8 @@
  */
 
 import { RoomTemplate, RoomType, Biome, ROOM_TEMPLATES } from './room_templates';
+import { RIFTLING_TEMPLATES } from './party';
+import { EliteTeamMember } from './room_templates';
 
 // ---------- Types ----------
 
@@ -34,7 +36,49 @@ export type BranchReward = 'elite' | 'recruit' | 'rift_shard';
 /** Regular branches are player-chosen; key/boss are special mandatory branches. */
 export type BranchKind = 'regular' | 'key' | 'boss';
 
-/** Identity of a branch — biome theme + terminal reward. */
+/**
+ * Biomes eligible for regular branch selection. A branch rolls one biome
+ * from this pool; species, elite team, recruit offerings, and tileset all
+ * derive from the biome directly. Only biomes that have authored combat
+ * room templates are listed — otherwise the branch's archetype biome and
+ * the rendered tileset would diverge.
+ */
+const BRANCH_BIOMES: Biome[] = [
+  'dark_lava',
+  'dark_grass_water',
+  'dark_grass_cliff',
+  'dark_forest',
+  'dark_plains_bluff',
+  'dark_badlands',
+  'dark_jungle',
+];
+
+/** Wild species pool per biome. Mixed-element on purpose — biomes are places,
+ * not type filters. Keep in sync with the Biome union in room_templates.ts. */
+const BIOME_SPECIES: Record<Biome, string[]> = {
+  dungeon:            [],
+  dark_lava:          ['emberhound', 'pyreshell', 'grindscale'],
+  grass_water:        ['tidecrawler', 'rivelet', 'lumoth'],
+  dark_grass_water:   ['tidecrawler', 'rivelet'],
+  grass_cliff:        ['tremorhorn', 'grindscale'],
+  dark_grass_cliff:   ['tremorhorn', 'grindscale'],
+  dark_forest:        ['barkbiter', 'gloomfang', 'solarglare'],
+  dark_plains_bluff:  ['gloomfang', 'hollowcrow', 'emberhound'],
+  dark_badlands:      ['pyreshell', 'hollowcrow', 'grindscale'],
+  dark_jungle:        ['gloomfang', 'thistlebound', 'tremorhorn'],
+  dark_void:          [],
+};
+
+/** Species pool for a biome. Falls back to all species if the biome is
+ * undefined or has no assigned pool (e.g. legacy 'dungeon'). */
+export function speciesForBiome(biome: Biome | undefined): string[] {
+  if (!biome) return Object.keys(RIFTLING_TEMPLATES);
+  const pool = BIOME_SPECIES[biome];
+  return pool && pool.length > 0 ? pool : Object.keys(RIFTLING_TEMPLATES);
+}
+
+/** Identity of a branch — biome + terminal reward. The biome drives tileset,
+ * wild species pool, elite team, and recruit offerings. */
 export interface BranchArchetype {
   biome: Biome;
   reward: BranchReward;
@@ -79,6 +123,23 @@ export interface DungeonRoom {
   terminal?: boolean;
   /** Branch this room belongs to (undefined for the hub). */
   branchId?: number;
+  /**
+   * For elite terminals: procedurally built elite team drawn from the branch
+   * biome's species pool. Overrides the shared ELITE_ROOM template's eliteTeam.
+   */
+  eliteTeamOverride?: EliteTeamMember[];
+  /**
+   * For recruit terminals: pre-rolled species keys (1-3) from the branch
+   * biome's species pool. The scene spawns these as stationary riftling NPCs
+   * for the player to walk up to and recruit. Combat is skipped in these rooms.
+   */
+  recruitOfferings?: string[];
+  /**
+   * For intro-zone combat rooms: forces an exact enemy spawn count, overriding
+   * the template's base spawns + depth-based extraCount logic. Keeps the first
+   * two rooms of a fresh run gentle while the player builds a team.
+   */
+  introSpawnCount?: number;
   cleared: boolean;
   visited: boolean;
 }
@@ -190,17 +251,33 @@ function pickEasiestTemplate(type: RoomType): RoomTemplate {
   )[0];
 }
 
-/** Biome pool for regular branches. Expand per level in Stage 4. */
-const BRANCH_BIOMES: Biome[] = [
-  'grass_cliff',
-  'grass_water',
-  'dark_forest',
-  'dark_plains_bluff',
-  'dark_grass_cliff',
-  'dark_grass_water',
-];
-
 const BRANCH_REWARDS: BranchReward[] = ['elite', 'recruit', 'rift_shard'];
+
+/**
+ * Procedurally build a 3-member elite team from the theme's species pool.
+ * Prefers unique species but allows repeats if the pool is smaller than 3.
+ * Picks a variety of roles when possible so the team has frontline + backline.
+ */
+function buildBiomeEliteTeam(biome: Biome): EliteTeamMember[] {
+  const pool = speciesForBiome(biome);
+  if (pool.length === 0) return [];
+  const shuffled = shuffle([...pool]);
+  const picks: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    picks.push(shuffled[i % shuffled.length]);
+  }
+  return picks.map((key) => ({ riftlingKey: key, equipped: [0, 1] as [number, number] }));
+}
+
+/**
+ * Roll 1-3 unique species from the theme pool for a recruit terminal. If the
+ * theme has fewer than 3 species, returns the full pool shuffled.
+ */
+function buildRecruitOfferings(biome: Biome): string[] {
+  const pool = shuffle([...speciesForBiome(biome)]);
+  const count = Math.min(pool.length, 1 + Math.floor(Math.random() * 3));
+  return pool.slice(0, Math.max(1, count));
+}
 
 /** Room type used for each terminal, keyed by reward. */
 function terminalTypeFor(reward: BranchReward): RoomType {
@@ -256,7 +333,11 @@ function addRoom(
   type: RoomType,
   gridX: number,
   gridY: number,
-  opts: { biome?: Biome; branchId?: number; terminal?: boolean } = {},
+  opts: {
+    biome?: Biome;
+    branchId?: number;
+    terminal?: boolean;
+  } = {},
 ): DungeonRoom {
   // `cleared` skips combat setup in safe rooms (start, hub). `visited` is
   // used by the no-backtrack door filter and the minimap fog-of-war, so it
@@ -351,6 +432,16 @@ function generateBranch(
     );
     connect(prev, terminal);
     roomIds.push(terminal.id);
+  }
+
+  // Attach themed payloads to the terminal room.
+  const terminalRoom = ctx.rooms[roomIds[roomIds.length - 1]];
+  if (archetype.reward === 'elite') {
+    terminalRoom.eliteTeamOverride = buildBiomeEliteTeam(archetype.biome);
+  } else if (archetype.reward === 'recruit') {
+    terminalRoom.recruitOfferings = buildRecruitOfferings(archetype.biome);
+    // Recruit terminals are safe walk-in rewards — skip combat entirely.
+    terminalRoom.cleared = true;
   }
 
   return {
@@ -464,24 +555,35 @@ function generateBoss(ctx: BuildCtx, branchId: number, hub: DungeonRoom): Branch
  */
 function generateIntroZone(ctx: BuildCtx, hub: DungeonRoom): DungeonRoom {
   const introStart = addRoom(ctx, 'start', 0, 3);
+
+  // Each intro room rolls its own biomed combat template so the tileset +
+  // wild species pool match. Skip the default-biome stubs so we pick from the
+  // real authored templates (water_combat, dark_forest, plains, lava, etc.).
+  const biomedCombat = ROOM_TEMPLATES.combat.filter((t) => t.biome !== undefined);
+  const rollIntroTemplate = (): RoomTemplate =>
+    pickRandom(biomedCombat.length > 0 ? biomedCombat : ROOM_TEMPLATES.combat);
+
   const combat1: DungeonRoom = {
     id: ctx.nextId++,
-    template: pickEasiestTemplate('combat'),
+    template: rollIntroTemplate(),
     gridX: 0,
     gridY: 2,
     connections: [],
     cleared: false,
     visited: false,
+    introSpawnCount: 2,
   };
   ctx.rooms.push(combat1);
+
   const combat2: DungeonRoom = {
     id: ctx.nextId++,
-    template: pickEasiestTemplate('combat'),
+    template: rollIntroTemplate(),
     gridX: 0,
     gridY: 1,
     connections: [],
     cleared: false,
     visited: false,
+    introSpawnCount: 4,
   };
   ctx.rooms.push(combat2);
 
@@ -527,7 +629,8 @@ export function generateDungeon(
   const hub = addRoom(ctx, 'hub', 0, 0);
 
   // Pick distinct biomes for each branch; rewards cycle and shuffle so the
-  // branch types feel varied across runs.
+  // branch types feel varied across runs. Biome drives tileset, wild species
+  // pool, and terminal (elite / recruit) offerings.
   const biomes = shuffle([...BRANCH_BIOMES]).slice(0, branchCount);
   const rewards: BranchReward[] = [];
   for (let i = 0; i < branchCount; i++) {
