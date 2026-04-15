@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { DefeatedRiftling } from '../combat/CombatManager';
-import { createRiftlingAtLevel, PartyRiftling, RIFTLING_TEMPLATES, speciesScale } from '../data/party';
+import { createRiftlingAtLevel, PartyRiftling, speciesScale } from '../data/party';
 
 /**
  * Recruit prompt — shown after clearing a combat room.
@@ -39,6 +39,12 @@ export class RecruitPrompt {
       return;
     }
 
+    // If only one unique species was offered, duplicate it so the player still
+    // gets a choice between two rolls of the same riftling with different stats.
+    if (this.options.length === 1) {
+      this.options = [this.options[0], this.options[0]];
+    }
+
     this.onChoice = onChoice;
     this.active = true;
     this.container.removeAll(true);
@@ -50,12 +56,12 @@ export class RecruitPrompt {
     const H = 320;
 
     // Dim background
-    const bg = this.scene.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.65);
+    const bg = this.scene.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.78);
     this.container.add(bg);
 
     // Title
     const title = this.scene.add
-      .text(W / 2, 40, 'A riftling wants to join your team!', {
+      .text(W / 2, 14, 'A riftling wants to join your team!', {
         fontFamily: 'monospace',
         fontSize: '12px',
         color: '#44ff88',
@@ -65,68 +71,189 @@ export class RecruitPrompt {
       .setOrigin(0.5);
     this.container.add(title);
 
-    // Show each option
-    const startX = W / 2 - ((this.options.length - 1) * 100) / 2;
+    // Card sizing: fit up to 3 cards across the 480px viewport
+    const count = this.options.length;
+    const cardW = count >= 3 ? 146 : count === 2 ? 180 : 200;
+    const cardH = 258;
+    const gap = count >= 3 ? 10 : 16;
+    const totalW = count * cardW + (count - 1) * gap;
+    const firstX = (W - totalW) / 2 + cardW / 2;
+    const cardTop = 28;
 
-    for (let i = 0; i < this.options.length; i++) {
+    for (let i = 0; i < count; i++) {
       const opt = this.options[i];
       const rolled = this.prerolled[i];
-      const x = startX + i * 100;
-      const y = 120;
+      const x = firstX + i * (cardW + gap);
+      const cy = cardTop + cardH / 2;
+      const typeColor = this.getTypeColor(rolled.elementType);
+      const typeColorNum = Phaser.Display.Color.HexStringToColor(typeColor).color;
 
-      // Sprite preview
-      const sprite = this.scene.add.image(x, y, `${opt.texturePrefix}_south`);
-      const baseScale = 1.5 * speciesScale(opt.texturePrefix);
+      // Card panel
+      const panel = this.scene.add.rectangle(x, cy, cardW, cardH, 0x0e1220, 0.95);
+      panel.setStrokeStyle(2, typeColorNum, 1);
+      this.container.add(panel);
+
+      // Sprite area
+      const spriteY = cardTop + 44;
+      const sprite = this.scene.add.image(x, spriteY, `${opt.texturePrefix}_south`);
+      const baseScale = 1.6 * speciesScale(opt.texturePrefix);
       sprite.setScale(baseScale);
       this.container.add(sprite);
 
       // Name
       const name = this.scene.add
-        .text(x, y + 40, opt.name, {
+        .text(x, cardTop + 86, opt.name, {
           fontFamily: 'monospace',
-          fontSize: '10px',
+          fontSize: '11px',
           color: '#ffffff',
+          stroke: '#000000',
+          strokeThickness: 2,
         })
         .setOrigin(0.5);
       this.container.add(name);
 
-      // Type + Role
-      const tmpl = RIFTLING_TEMPLATES[opt.riftlingKey];
-      if (tmpl) {
-        const typeLabel = this.scene.add
-          .text(x, y + 53, `${tmpl.elementType.toUpperCase()}  ${tmpl.role.toUpperCase()}`, {
-            fontFamily: 'monospace',
-            fontSize: '7px',
-            color: this.getTypeColor(tmpl.elementType),
-          })
-          .setOrigin(0.5);
-        this.container.add(typeLabel);
-
-        // Stats preview
-        const stats = this.scene.add
-          .text(x, y + 64, `HP:${tmpl.maxHp} ATK:${tmpl.attack} DEF:${tmpl.defense}`, {
-            fontFamily: 'monospace',
-            fontSize: '7px',
-            color: '#aaaaaa',
-          })
-          .setOrigin(0.5);
-        this.container.add(stats);
-      }
-
-      // Temperament
-      const tempColor = rolled.temperament.boosted ? '#cc88ff' : '#888888';
-      const tempLabel = this.scene.add
-        .text(x, y + 76, rolled.temperament.name, {
+      // Type + Role badges
+      const badgeY = cardTop + 102;
+      const typeBadge = this.scene.add
+        .text(x - 2, badgeY, rolled.elementType.toUpperCase(), {
           fontFamily: 'monospace',
           fontSize: '8px',
-          color: tempColor,
+          color: typeColor,
+          backgroundColor: '#000000',
+          padding: { left: 3, right: 3, top: 1, bottom: 1 },
+        })
+        .setOrigin(1, 0.5);
+      this.container.add(typeBadge);
+
+      const roleBadge = this.scene.add
+        .text(x + 2, badgeY, rolled.role.toUpperCase(), {
+          fontFamily: 'monospace',
+          fontSize: '8px',
+          color: '#ffffff',
+          backgroundColor: '#2a2f42',
+          padding: { left: 3, right: 3, top: 1, bottom: 1 },
+        })
+        .setOrigin(0, 0.5);
+      this.container.add(roleBadge);
+
+      // Divider
+      const divider = this.scene.add.rectangle(x, cardTop + 116, cardW - 18, 1, typeColorNum, 0.6);
+      this.container.add(divider);
+
+      // Stats — two columns
+      const statsLeftX = x - cardW / 2 + 10;
+      const statsRightX = x + 4;
+      const statsTopY = cardTop + 124;
+      const lineH = 11;
+      const statStyle = {
+        fontFamily: 'monospace',
+        fontSize: '8px',
+        color: '#cfd4e0',
+      } as const;
+
+      const boosted = rolled.temperament.boosted;
+      const reduced = rolled.temperament.reduced;
+      const statColor = (key: string): string => {
+        if (boosted === key) return '#88ffaa';
+        if (reduced === key) return '#ff8888';
+        return '#cfd4e0';
+      };
+
+      const arrow = (key: string): string => {
+        if (boosted === key) return '▲';
+        if (reduced === key) return '▼';
+        return '';
+      };
+
+      const leftStats: Array<[string, string, string, string]> = [
+        ['HP',  String(rolled.maxHp),   statColor('hp'),      arrow('hp')],
+        ['ATK', String(rolled.attack),  statColor('attack'),  arrow('attack')],
+        ['DEF', String(rolled.defense), statColor('defense'), arrow('defense')],
+        ['SPD', String(rolled.speed),   statColor('speed'),   arrow('speed')],
+      ];
+      const rightStats: Array<[string, string, string, string]> = [
+        ['A.SPD', `${(rolled.attackSpeed / 1000).toFixed(2)}s`, statColor('attackSpeed'), arrow('attackSpeed')],
+        ['CRIT',  `${rolled.critRate}%`,                        statColor('critRate'),    arrow('critRate')],
+        ['EVA',   `${rolled.evasion}%`,                         statColor('evasion'),     arrow('evasion')],
+        ['RNG',   String(rolled.attackRange),                   '#cfd4e0',                ''],
+      ];
+
+      const renderStat = (
+        baseX: number,
+        row: number,
+        label: string,
+        value: string,
+        color: string,
+        mark: string,
+      ) => {
+        const y = statsTopY + row * lineH;
+        this.container.add(
+          this.scene.add
+            .text(baseX, y, label, { ...statStyle, color: '#7a8094' })
+            .setOrigin(0, 0),
+        );
+        this.container.add(
+          this.scene.add.text(baseX + 32, y, value, { ...statStyle, color }).setOrigin(0, 0),
+        );
+        if (mark) {
+          const markColor = mark === '▲' ? '#88ffaa' : '#ff8888';
+          this.container.add(
+            this.scene.add
+              .text(baseX + 54, y, mark, { ...statStyle, fontSize: '7px', color: markColor })
+              .setOrigin(0, 0),
+          );
+        }
+      };
+
+      for (let s = 0; s < leftStats.length; s++) {
+        const [label, value, color, mark] = leftStats[s];
+        renderStat(statsLeftX, s, label, value, color, mark);
+      }
+      for (let s = 0; s < rightStats.length; s++) {
+        const [label, value, color, mark] = rightStats[s];
+        renderStat(statsRightX, s, label, value, color, mark);
+      }
+
+      // Temperament name
+      const tempLabel = this.scene.add
+        .text(x, cardTop + 178, rolled.temperament.name, {
+          fontFamily: 'monospace',
+          fontSize: '8px',
+          color: '#cc88ff',
         })
         .setOrigin(0.5);
       this.container.add(tempLabel);
 
+      // Moves — equipped two
+      const movesHeader = this.scene.add
+        .text(x, cardTop + 194, 'MOVES', {
+          fontFamily: 'monospace',
+          fontSize: '7px',
+          color: '#7a8094',
+        })
+        .setOrigin(0.5);
+      this.container.add(movesHeader);
+
+      const eq0 = rolled.moves[rolled.equipped[0]];
+      const eq1 = rolled.moves[rolled.equipped[1]];
+      const moveLine = (m: typeof eq0, yOff: number) => {
+        if (!m) return;
+        const prefix = m.isSignature ? '★ ' : '  ';
+        const label = this.scene.add
+          .text(x, cardTop + yOff, `${prefix}${m.name}`, {
+            fontFamily: 'monospace',
+            fontSize: '8px',
+            color: m.isSignature ? '#ffdd44' : '#ffffff',
+          })
+          .setOrigin(0.5);
+        this.container.add(label);
+      };
+      moveLine(eq0, 206);
+      moveLine(eq1, 218);
+
       // Key hint
       const keyHint = this.scene.add
-        .text(x, y + 92, `[${i + 1}]`, {
+        .text(x, cardTop + 240, `[${i + 1}]`, {
           fontFamily: 'monospace',
           fontSize: '12px',
           color: '#ffdd44',
@@ -139,17 +266,23 @@ export class RecruitPrompt {
       // Click hit area covering the whole card
       const cardIndex = i;
       const hit = this.scene.add
-        .rectangle(x, y + 38, 92, 124, 0x000000, 0)
+        .rectangle(x, cy, cardW, cardH, 0x000000, 0.001)
         .setInteractive({ useHandCursor: true });
-      hit.on('pointerover', () => sprite.setScale(baseScale * 1.13));
-      hit.on('pointerout', () => sprite.setScale(baseScale));
+      hit.on('pointerover', () => {
+        sprite.setScale(baseScale * 1.1);
+        panel.setStrokeStyle(2, 0xffdd44, 1);
+      });
+      hit.on('pointerout', () => {
+        sprite.setScale(baseScale);
+        panel.setStrokeStyle(2, typeColorNum, 1);
+      });
       hit.on('pointerdown', () => this.selectOption(cardIndex));
       this.container.add(hit);
     }
 
     // Skip hint — clickable
     const skip = this.scene.add
-      .text(W / 2, H - 40, '[ESC] Skip', {
+      .text(W / 2, H - 12, '[ESC] Skip', {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#888888',

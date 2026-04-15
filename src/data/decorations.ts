@@ -45,6 +45,13 @@ export interface DecorationDef {
   collisionWidth?: number;
   /** Collision body height in game pixels (only used when collides=true). */
   collisionHeight?: number;
+  /**
+   * Optional vertical shift in game pixels applied to the sprite's render
+   * position (positive = down). Used for "immersive" props like tall grass
+   * so their bottom aligns with a character's visual feet rather than the
+   * tile bottom, producing the classic "standing in grass" overlap.
+   */
+  yOffset?: number;
 }
 
 /**
@@ -90,8 +97,14 @@ const DECORATION_OVERRIDES: Record<string, Omit<DecorationDef, 'key' | 'path'>> 
     collides: false,
   },
   tall_grass_dark: {
-    displaySize: 16,
+    displaySize: 20,
     collides: false,
+    yOffset: 6,
+  },
+  tall_grass_wild: {
+    displaySize: 20,
+    collides: false,
+    yOffset: 6,
   },
   badlands_small_rock: {
     displaySize: 16,

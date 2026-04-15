@@ -148,6 +148,15 @@ export interface Move {
   attackOriginOffsetY?: number;
 }
 
+/**
+ * Combat stance — persistent per-riftling command set by the player.
+ * Push: aggressive, chase nearest/focus target.
+ * Hold: anchor to current spot, only engage enemies in range.
+ * Withdraw: retreat to the trainer, kite with ranged if harassed.
+ * Group: converge on the living-ally centroid, then Hold there.
+ */
+export type Stance = 'push' | 'hold' | 'withdraw' | 'group';
+
 export interface PartyRiftling {
   name: string;
   texturePrefix: string;
@@ -176,6 +185,8 @@ export interface PartyRiftling {
   xp: number;
   /** Temperament — influences stat growth on level-up. */
   temperament: Temperament;
+  /** Persistent combat stance, controlled by the player via 1-4 keys. */
+  stance: Stance;
 }
 
 /**
@@ -195,7 +206,11 @@ export function speciesScale(texturePrefix: string): number {
 /** Riftling templates — base stats for each species */
 export const RIFTLING_TEMPLATES: Record<
   string,
-  Omit<PartyRiftling, 'hp' | 'equipped' | 'level' | 'xp' | 'temperament'> & { baseStats: BaseStatRanges }
+  Omit<PartyRiftling, 'hp' | 'equipped' | 'level' | 'xp' | 'temperament' | 'stance'> & {
+    baseStats: BaseStatRanges;
+    /** Three unlockable moves presented at levels 3, 6, and 9 respectively. */
+    upgradeMoves: [Move, Move, Move];
+  }
 > = {
   emberhound: {
     name: 'Emberhound',
@@ -222,7 +237,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Ember Strike', power: 5, cooldown: 3, description: 'Quick fiery bite that stacks ignite on the target', isSignature: false, kind: 'strike', appliesIgnite: 2 },
       { name: 'Fire Dash', power: 8, cooldown: 8, description: 'Dashes through the target, repositioning behind it', isSignature: true, kind: 'pierce', repositions: true },
+    ],
+    upgradeMoves: [
       { name: 'Flame Charge', power: 7, cooldown: 10, description: 'Deals bonus damage for each ignite stack on the target, then drains life', isSignature: false, kind: 'drain', drainRatio: 0.3, bonusPerIgnite: 1.5 },
+      { name: 'Cinder Trail', power: 9, cooldown: 7, description: 'Sprints through the target leaving a scorching trail that stacks heavy ignite', isSignature: false, kind: 'pierce', repositions: true, appliesIgnite: 3 },
+      { name: 'Inferno Pounce', power: 12, cooldown: 15, description: 'Leaps at the target in a ball of flame, igniting and slowing them on landing', isSignature: false, kind: 'leap', appliesIgnite: 4, appliesSlowOnLand: true, duration: 2500 },
     ],
   },
   pyreshell: {
@@ -250,7 +269,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Magma Slam', power: 7, cooldown: 5, description: 'Heavy shell-slam that leaves a burning mark on the target', isSignature: false, kind: 'strike', appliesIgnite: 1, attackAnim: 'attack', attackAnimDelay: 200 },
       { name: 'Eruption', power: 9, cooldown: 20, description: 'Shell erupts in a molten blast, igniting every enemy caught in the radius', isSignature: true, kind: 'blast', radius: 45, appliesIgnite: 3, attackAnim: 'attack', attackAnimDelay: 200 },
+    ],
+    upgradeMoves: [
       { name: 'Lava Shield', power: 4, cooldown: 60, description: 'Pyreshell coats itself in molten armor, boosting defense and reflecting hits for 4 seconds', isSignature: false, kind: 'shield', duration: 4000, selfTarget: true, thornsAmount: 2 },
+      { name: 'Searing Wave', power: 8, cooldown: 10, description: 'Spins with molten fury, burning every enemy caught in the swirl', isSignature: false, kind: 'spin', radius: 50, appliesIgnite: 2 },
+      { name: 'Caldera Burst', power: 13, cooldown: 22, description: 'The shell erupts with volcanic force, igniting and stunning everything in a wide radius', isSignature: false, kind: 'blast', radius: 60, appliesIgnite: 4, stunsRadius: true, stunDuration: 600 },
     ],
   },
   solarglare: {
@@ -278,7 +301,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Light Lance', power: 6, cooldown: 4, description: 'Focused light shot that blinds the target, reducing their accuracy', isSignature: false, kind: 'strike', appliesBlind: 10, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 250, attackOriginOffsetY: -8 },
       { name: 'Solar Flare', power: 10, cooldown: 25, description: 'Fires a sustained beam of light in a straight line, scorching everything in its path for 3 seconds', isSignature: true, kind: 'beam', attackOriginOffsetY: -8 },
+    ],
+    upgradeMoves: [
       { name: 'Prism Shot', power: 4, cooldown: 3, description: 'Scatters light bolts that refract to nearby enemies', isSignature: false, kind: 'barrage', hits: 3, refracts: true, attackAnim: 'attack', attackAnimDelay: 250, attackOriginOffsetY: -8 },
+      { name: 'Sunspear', power: 10, cooldown: 9, description: 'Hurls a shaft of sunlight through a line of enemies, blinding each', isSignature: false, kind: 'pierce', dashThrough: true, appliesBlind: 15, blindDuration: 2500 },
+      { name: 'Zenith Nova', power: 12, cooldown: 22, description: 'Detonates in a cataclysm of light, searing and blinding all enemies in a wide radius', isSignature: false, kind: 'blast', radius: 80, appliesBlind: 25, blindDuration: 4000 },
     ],
   },
   lumoth: {
@@ -306,7 +333,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Dust Blast', power: 6, cooldown: 3, description: 'Dust cloud that slows and blinds the target', isSignature: false, kind: 'slow', duration: 3000, appliesBlind: 10, blindDuration: 2000 },
       { name: 'Luminova', power: 11, cooldown: 11, description: 'Intense flash that blinds all enemies in a wide area; Lumoth slips away in the chaos', isSignature: true, kind: 'blast', radius: 70, appliesBlind: 15, blindDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 15, selfBuffDuration: 2000 },
+    ],
+    upgradeMoves: [
       { name: 'Moonbolt', power: 9, cooldown: 6, description: 'A focused bolt of lunar light — reliable ranged damage', isSignature: false, kind: 'strike' },
+      { name: 'Stardust Veil', power: 6, cooldown: 10, description: 'Swirls a cloud of blinding dust and slips into the shadows, boosting evasion', isSignature: false, kind: 'spin', radius: 60, appliesBlind: 15, blindDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 20, selfBuffDuration: 2500 },
+      { name: 'Eclipse Storm', power: 8, cooldown: 14, description: 'Unleashes a cascade of refracting lunar bolts that blind everything they touch', isSignature: false, kind: 'barrage', hits: 5, refracts: true, appliesBlind: 12, blindDuration: 2500 },
     ],
   },
   tidecrawler: {
@@ -333,8 +364,12 @@ export const RIFTLING_TEMPLATES: Record<
     },
     moves: [
       { name: 'Claw Crush', power: 6, cooldown: 4, description: 'Crushes the target with pincers, waterlogging and reducing their defense', isSignature: false, kind: 'strike', appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
-      { name: 'Tidal Spin', power: 10, cooldown: 10, description: 'Spins in a torrent of water, striking all nearby enemies at once', isSignature: true, kind: 'spin', radius: 50 },
+      { name: 'Tidal Spin', power: 10, cooldown: 10, description: 'Spins in a torrent of water, striking all nearby enemies at once', isSignature: true, kind: 'spin', radius: 50, attackAnim: 'spin' },
+    ],
+    upgradeMoves: [
       { name: 'Shell Guard', power: 0, cooldown: 8, description: 'Braces for impact — draws all nearby enemy attention and boosts own defense', isSignature: false, kind: 'taunt', duration: 4000, selfBuffStat: 'defense', selfBuffAmount: 3, selfBuffDuration: 4000 },
+      { name: 'Undertow Pull', power: 8, cooldown: 6, description: 'Drags the target into pincer range and cracks their armor', isSignature: false, kind: 'strike', pullsTarget: true, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3000 },
+      { name: 'Maelstrom', power: 12, cooldown: 18, description: 'Summons a crushing whirlpool that drenches and slows every enemy in a wide area', isSignature: false, kind: 'blast', radius: 60, appliesStatDebuff: 'speed', debuffAmount: 25, debuffDuration: 3000 },
     ],
   },
   gloomfang: {
@@ -362,7 +397,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Shadow Bite', power: 7, cooldown: 3, description: 'Drains life and marks the target — marked enemies take 25% more damage from all sources', isSignature: false, kind: 'drain', drainRatio: 0.35, appliesHuntersMark: true, markBonus: 0.25, markDuration: 4000 },
       { name: 'Void Rend', power: 12, cooldown: 10, description: 'Tears through armor — devastates wounded targets with execute bonus damage', isSignature: true, kind: 'pierce', executeBonusPct: 0.2 },
+    ],
+    upgradeMoves: [
       { name: 'Dusk Dash', power: 5, cooldown: 4, description: 'Blinks to the highest-threat backline enemy and slows them on arrival', isSignature: false, kind: 'leap', shadowStep: true, appliesSlowOnLand: true, duration: 2500 },
+      { name: 'Grave Mark', power: 8, cooldown: 5, description: 'A branding strike that lingers — marked targets take heavy bonus damage and crack armor', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.35, markDuration: 5000, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Oblivion Rend', power: 10, cooldown: 12, description: 'Phases through a line of enemies, tearing wounded foes apart with execute damage', isSignature: false, kind: 'pierce', dashThrough: true, executeBonusPct: 0.35 },
     ],
   },
   barkbiter: {
@@ -390,7 +429,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Sap Leech', power: 6, cooldown: 5, description: 'Heals the most injured ally; heals self if no ally needs it', isSignature: false, kind: 'heal', selfHealFallback: true },
       { name: 'Thornburst', power: 6, cooldown: 9, description: 'Erupts thorns at multiple enemies — each target takes damage whenever they attack while briar is active', isSignature: true, kind: 'barrage', hits: 3, appliesBriar: 2, briarDuration: 4000 },
+    ],
+    upgradeMoves: [
       { name: 'Root Snap', power: 6, cooldown: 5, description: 'Snaps a root tendril at the target, dealing damage and pinning them in place', isSignature: false, kind: 'slow', rootTarget: true, duration: 1500 },
+      { name: 'Bramble Shield', power: 0, cooldown: 12, description: 'Wreathes itself in thorns — enemies who attack it take reflected damage', isSignature: false, kind: 'shield', duration: 5000, selfTarget: true, thornsAmount: 4 },
+      { name: 'Verdant Pulse', power: 8, cooldown: 14, description: 'Releases a pulse of thorny growth — every enemy caught is ensnared with heavy briar', isSignature: false, kind: 'blast', radius: 60, appliesBriar: 3, briarDuration: 5000 },
     ],
   },
   tremorhorn: {
@@ -418,7 +461,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Vine Leech', power: 3, cooldown: 4, description: 'Earthen vines latch onto a nearby target, dealing minimal damage but draining their vitality', isSignature: false, kind: 'drain', drainRatio: 0.7 },
       { name: 'Earthquake', power: 11, cooldown: 12, description: 'Stomps the ground with seismic force, stunning all enemies caught in the blast', isSignature: true, kind: 'blast', radius: 55, stunsRadius: true, stunDuration: 800 },
+    ],
+    upgradeMoves: [
       { name: 'Stone Bash', power: 5, cooldown: 7, description: 'Bellows a challenge drawing nearby enemies — braces against knockback and reinforces own defense', isSignature: false, kind: 'taunt', duration: 5000, selfBuffStat: 'defense', selfBuffAmount: 5, selfBuffDuration: 5000, grantsKnockbackImmunity: true },
+      { name: 'Fault Line', power: 9, cooldown: 10, description: 'Charges forward splitting the earth, slowing every enemy in its path', isSignature: false, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'speed', debuffAmount: 20, debuffDuration: 3000 },
+      { name: 'Aftershock', power: 13, cooldown: 22, description: 'An unstoppable stomp — the ground buckles, stunning every nearby enemy for a full second', isSignature: false, kind: 'blast', radius: 60, stunsRadius: true, stunDuration: 1000 },
     ],
   },
   hollowcrow: {
@@ -446,7 +493,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Peck Barrage', power: 4, cooldown: 3, description: 'Rapid aerial strikes that hex each target, reducing their attack power', isSignature: false, kind: 'barrage', hits: 3, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000 },
       { name: 'Phantom Dive', power: 10, cooldown: 10, description: 'Phases into the shadows — untouchable for 0.8s — then strikes with a piercing dive', isSignature: true, kind: 'pierce', phasesBeforeStrike: true },
+    ],
+    upgradeMoves: [
       { name: 'Hex Screech', power: 5, cooldown: 6, description: 'Unsettling cry that slows and hexes all nearby enemies', isSignature: false, kind: 'spin', radius: 60, appliesSlowToAllHit: true, duration: 3000, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Umbral Volley', power: 5, cooldown: 7, description: 'A flurry of shadow-tipped feathers that cripple every target\u2019s attack power', isSignature: false, kind: 'barrage', hits: 4, appliesStatDebuff: 'attack', debuffAmount: 3, debuffDuration: 3000 },
+      { name: 'Nightfall Dive', power: 12, cooldown: 14, description: 'Fades out, then comes screaming back down with an execute strike on a wounded target', isSignature: false, kind: 'pierce', phasesBeforeStrike: true, executeBonusPct: 0.3 },
     ],
   },
   rivelet: {
@@ -474,7 +525,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Crystal Claw', power: 6, cooldown: 3, description: 'Slashes with icy claws, waterlogging and reducing target defense', isSignature: false, kind: 'strike', appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
       { name: 'Torrent Rush', power: 10, cooldown: 9, description: 'Surges through enemies in a straight line, waterlogging every target hit', isSignature: true, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
+    ],
+    upgradeMoves: [
       { name: 'Undertow', power: 5, cooldown: 5, description: 'Drains life from the target and yanks them closer', isSignature: false, kind: 'drain', drainRatio: 0.3, pullsTarget: true },
+      { name: 'Frost Claws', power: 7, cooldown: 5, description: 'Rapid icy claws that chill the target to the bone, crippling their movement', isSignature: false, kind: 'strike', appliesStatDebuff: 'speed', debuffAmount: 25, debuffDuration: 3000 },
+      { name: 'Glacial Surge', power: 11, cooldown: 11, description: 'Charges in a frozen line, shattering the armor of every enemy caught in the surge', isSignature: false, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 4, debuffDuration: 4000 },
     ],
   },
   grindscale: {
@@ -502,7 +557,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Scale Slam', power: 5, cooldown: 5, description: 'Whips armored tail — bonus damage scales with own defense stat', isSignature: false, kind: 'strike', defenseScaledBonus: 0.5 },
       { name: 'Stonegrind', power: 11, cooldown: 11, description: 'Curls into a boulder and rolls through enemies in a line, shredding their armor', isSignature: true, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3000 },
+    ],
+    upgradeMoves: [
       { name: 'Iron Curl', power: 0, cooldown: 8, description: 'Coils into an armored ball, taunting nearby enemies and reducing all incoming damage by 40% for 3 seconds', isSignature: false, kind: 'taunt', duration: 4000, grantsDamageReduction: 0.4, damageReductionDuration: 3000 },
+      { name: 'Bedrock Stance', power: 0, cooldown: 12, description: 'Roots into the ground, taunting foes and hardening its defense — cannot be knocked back', isSignature: false, kind: 'taunt', duration: 5000, selfBuffStat: 'defense', selfBuffAmount: 6, selfBuffDuration: 5000, grantsKnockbackImmunity: true },
+      { name: 'Avalanche Charge', power: 9, cooldown: 11, description: 'Rolls through a line of enemies with crushing force — scales heavily with defense', isSignature: false, kind: 'pierce', dashThrough: true, defenseScaledBonus: 0.75 },
     ],
   },
   thistlebound: {
@@ -530,7 +589,11 @@ export const RIFTLING_TEMPLATES: Record<
     moves: [
       { name: 'Seed Barrage', power: 5, cooldown: 3, description: 'Volley of sharp seeds that spreads briar across targets', isSignature: false, kind: 'barrage', hits: 3, appliesBriar: 1, briarDuration: 3000, refracts: true },
       { name: 'Predator\'s Leap', power: 8, cooldown: 12, description: 'Leaps to the farthest ranged enemy, landing with a piercing strike that exposes their defenses', isSignature: true, kind: 'leap', appliesStatDebuff: 'evasion', debuffAmount: 5, debuffDuration: 3000 },
+    ],
+    upgradeMoves: [
       { name: 'Briar Bolt', power: 8, cooldown: 8, description: 'Thorn-wrapped bolt that slows and briar-snares the target', isSignature: false, kind: 'slow', duration: 3000, appliesBriar: 2, briarDuration: 4000 },
+      { name: 'Snare Volley', power: 6, cooldown: 8, description: 'Launches a wide volley of briar seeds that refract between targets, each ensnared in thorns', isSignature: false, kind: 'barrage', hits: 4, refracts: true, appliesBriar: 2, briarDuration: 4000 },
+      { name: 'Apex Ambush', power: 11, cooldown: 15, description: 'Pounces on a distant target with predatory fury, leaving them exposed and tangled in briar', isSignature: false, kind: 'leap', appliesStatDebuff: 'evasion', debuffAmount: 10, debuffDuration: 4000, appliesBriar: 3, briarDuration: 5000 },
     ],
   },
 };
@@ -555,18 +618,138 @@ export const BASE_KILL_XP = 10;
 
 export interface LevelUpResult {
   riftling: PartyRiftling;
-  gains: { stat: string; amount: number }[];
+  /** The new level the riftling just reached. */
+  newLevel: number;
+}
+
+// --- Stat cards (player-facing level-up choices) ---
+
+export interface StatCard {
+  id: string;
+  stat: StatKey;
+  amount: number;
+  label: string;
+  description: string;
+}
+
+/** All possible stat cards. Each level-up rolls 3 distinct cards from this pool. */
+const STAT_CARD_POOL: StatCard[] = [
+  { id: 'hp',          stat: 'hp',          amount: 10,  label: '+10 HP',     description: 'Tougher — more health to soak hits' },
+  { id: 'attack',      stat: 'attack',      amount: 2,   label: '+2 ATK',     description: 'Stronger hits every swing' },
+  { id: 'defense',     stat: 'defense',     amount: 2,   label: '+2 DEF',     description: 'Hardened — reduce all incoming damage' },
+  { id: 'speed',       stat: 'speed',       amount: 4,   label: '+4 SPD',     description: 'Quicker movement across the battlefield' },
+  { id: 'attackSpeed', stat: 'attackSpeed', amount: -30, label: '-30 A.SPD',  description: 'Faster attacks — less time between hits' },
+  { id: 'critRate',    stat: 'critRate',    amount: 4,   label: '+4% CRIT',   description: 'More critical hits for big damage spikes' },
+  { id: 'evasion',     stat: 'evasion',     amount: 4,   label: '+4% EVA',    description: 'Harder to hit — dodge more attacks' },
+];
+
+const CRIT_CAP = 50;
+const EVA_CAP = 40;
+const ATTACK_SPEED_FLOOR = 400;
+
+/** Return true if this card's stat is already at its cap for this riftling. */
+function isStatCapped(card: StatCard, riftling: PartyRiftling): boolean {
+  if (card.stat === 'critRate'    && riftling.critRate    >= CRIT_CAP) return true;
+  if (card.stat === 'evasion'     && riftling.evasion     >= EVA_CAP) return true;
+  if (card.stat === 'attackSpeed' && riftling.attackSpeed <= ATTACK_SPEED_FLOOR) return true;
+  return false;
 }
 
 /**
- * Apply one level's worth of stat gains to a riftling and increment its level.
- * Shared by awardXP (player leveling) and createRiftlingAtLevel (enemy spawning).
- * Returns the stat gains that were applied.
+ * Roll 3 distinct stat cards for a player level-up.
+ * Temperament biases the pool: boosted stats are ~2.5x as likely, reduced stat excluded.
  */
-function applyLevelUpGains(riftling: PartyRiftling): { stat: string; amount: number }[] {
+export function generateStatCards(riftling: PartyRiftling): StatCard[] {
+  const boosted = riftling.temperament.boosted;
+  const reduced = riftling.temperament.reduced;
+
+  const weighted: { card: StatCard; weight: number }[] = [];
+  for (const card of STAT_CARD_POOL) {
+    if (card.stat === reduced) continue;
+    if (isStatCapped(card, riftling)) continue;
+    const weight = card.stat === boosted ? 25 : 10;
+    weighted.push({ card, weight });
+  }
+
+  const picks: StatCard[] = [];
+  const maxPicks = Math.min(3, weighted.length);
+  while (picks.length < maxPicks) {
+    const total = weighted.reduce((s, w) => s + w.weight, 0);
+    let r = Math.random() * total;
+    let idx = 0;
+    for (; idx < weighted.length - 1; idx++) {
+      r -= weighted[idx].weight;
+      if (r <= 0) break;
+    }
+    picks.push(weighted[idx].card);
+    weighted.splice(idx, 1);
+  }
+  return picks;
+}
+
+/** Apply a picked stat card to the riftling. */
+export function applyStatCard(riftling: PartyRiftling, card: StatCard): void {
+  switch (card.stat) {
+    case 'hp':
+      riftling.maxHp += card.amount;
+      riftling.hp = Math.min(riftling.hp + card.amount, riftling.maxHp);
+      break;
+    case 'attack':  riftling.attack  += card.amount; break;
+    case 'defense': riftling.defense += card.amount; break;
+    case 'speed':   riftling.speed   += card.amount; break;
+    case 'attackSpeed':
+      riftling.attackSpeed = Math.max(ATTACK_SPEED_FLOOR, riftling.attackSpeed + card.amount);
+      break;
+    case 'critRate':
+      riftling.critRate = Math.min(CRIT_CAP, riftling.critRate + card.amount);
+      break;
+    case 'evasion':
+      riftling.evasion = Math.min(EVA_CAP, riftling.evasion + card.amount);
+      break;
+  }
+}
+
+// --- Move upgrades (offered at levels 3, 6, 9) ---
+
+/**
+ * Return the upgrade move offered at the given level, or null if this is not
+ * a move-upgrade level. Returns a fresh clone so mutations don't leak back
+ * into the template.
+ */
+export function getUpgradeMoveForLevel(riftling: PartyRiftling, level: number): Move | null {
+  if (level !== 3 && level !== 6 && level !== 9) return null;
+  const tmpl = RIFTLING_TEMPLATES[riftling.texturePrefix];
+  if (!tmpl?.upgradeMoves) return null;
+  const poolIdx = level / 3 - 1;
+  const move = tmpl.upgradeMoves[poolIdx];
+  return move ? { ...move } : null;
+}
+
+/**
+ * Install a move upgrade onto a riftling.
+ * - If `replaceIdx === riftling.moves.length`, the new move fills a fresh slot (no replacement).
+ * - Otherwise it replaces the move at that index. If that slot was equipped, it stays equipped.
+ * - Pass null to skip the upgrade entirely.
+ */
+export function applyMoveUpgrade(riftling: PartyRiftling, move: Move, replaceIdx: number | null): void {
+  if (replaceIdx === null || replaceIdx < 0) return;
+  if (replaceIdx >= riftling.moves.length) {
+    riftling.moves.push(move);
+    return;
+  }
+  riftling.moves[replaceIdx] = move;
+}
+
+// --- Leveling ---
+
+/**
+ * Apply one level's worth of automatic stat gains to a riftling and increment
+ * its level. Used ONLY by `createRiftlingAtLevel` for enemy/recruit scaling —
+ * players level up via the stat-card flow.
+ */
+function applyAutoLevelUp(riftling: PartyRiftling): void {
   riftling.level++;
 
-  const gains: { stat: string; amount: number }[] = [];
   const boosted = riftling.temperament.boosted;
   const reduced = riftling.temperament.reduced;
   const canGain = (key: StatKey) => reduced !== key;
@@ -578,44 +761,45 @@ function applyLevelUpGains(riftling: PartyRiftling): { stat: string; amount: num
   if (hpGain > 0) {
     riftling.maxHp += hpGain;
     riftling.hp = Math.min(riftling.hp + hpGain, riftling.maxHp);
-    gains.push({ stat: 'HP', amount: hpGain });
   }
 
-  // ATK — 60% chance of +1
-  if (canGain('attack') && Math.random() < 0.6) { riftling.attack += 1; gains.push({ stat: 'ATK', amount: 1 }); }
-  if (boosted === 'attack')                       { riftling.attack += 1; gains.push({ stat: 'ATK', amount: 1 }); }
+  if (canGain('attack')  && Math.random() < 0.6) riftling.attack  += 1;
+  if (boosted === 'attack')                       riftling.attack  += 1;
 
-  // DEF — 40% chance of +1
-  if (canGain('defense') && Math.random() < 0.4) { riftling.defense += 1; gains.push({ stat: 'DEF', amount: 1 }); }
-  if (boosted === 'defense')                      { riftling.defense += 1; gains.push({ stat: 'DEF', amount: 1 }); }
+  if (canGain('defense') && Math.random() < 0.4) riftling.defense += 1;
+  if (boosted === 'defense')                      riftling.defense += 1;
 
-  // SPD — 30% chance of +2
-  if (canGain('speed') && Math.random() < 0.3) { riftling.speed += 2; gains.push({ stat: 'SPD', amount: 2 }); }
-  if (boosted === 'speed')                      { riftling.speed += 2; gains.push({ stat: 'SPD', amount: 2 }); }
+  if (canGain('speed')   && Math.random() < 0.3) riftling.speed   += 2;
+  if (boosted === 'speed')                        riftling.speed   += 2;
 
-  // ATK SPD — 25% chance to reduce attackSpeed by 20ms (faster attacks)
-  if (canGain('attackSpeed') && Math.random() < 0.25 && riftling.attackSpeed > 400) { riftling.attackSpeed -= 20; gains.push({ stat: 'A.SPD', amount: 20 }); }
-  if (boosted === 'attackSpeed' && riftling.attackSpeed > 400)                       { riftling.attackSpeed -= 15; gains.push({ stat: 'A.SPD', amount: 15 }); }
+  if (canGain('attackSpeed') && Math.random() < 0.25 && riftling.attackSpeed > ATTACK_SPEED_FLOOR) riftling.attackSpeed -= 20;
+  if (boosted === 'attackSpeed' && riftling.attackSpeed > ATTACK_SPEED_FLOOR)                      riftling.attackSpeed -= 15;
 
-  // CRIT — 20% chance of +2, capped at 50
-  if (canGain('critRate') && Math.random() < 0.2 && riftling.critRate < 50) { const g = Math.min(2, 50 - riftling.critRate); riftling.critRate += g; gains.push({ stat: 'CRIT', amount: g }); }
-  if (boosted === 'critRate' && riftling.critRate < 50)                      { const g = Math.min(2, 50 - riftling.critRate); riftling.critRate += g; gains.push({ stat: 'CRIT', amount: g }); }
+  if (canGain('critRate') && Math.random() < 0.2 && riftling.critRate < CRIT_CAP) {
+    riftling.critRate = Math.min(CRIT_CAP, riftling.critRate + 2);
+  }
+  if (boosted === 'critRate' && riftling.critRate < CRIT_CAP) {
+    riftling.critRate = Math.min(CRIT_CAP, riftling.critRate + 2);
+  }
 
-  // EVA — 15% chance of +2, capped at 40
-  if (canGain('evasion') && Math.random() < 0.15 && riftling.evasion < 40) { const g = Math.min(2, 40 - riftling.evasion); riftling.evasion += g; gains.push({ stat: 'EVA', amount: g }); }
-  if (boosted === 'evasion' && riftling.evasion < 40)                       { const g = Math.min(2, 40 - riftling.evasion); riftling.evasion += g; gains.push({ stat: 'EVA', amount: g }); }
+  if (canGain('evasion') && Math.random() < 0.15 && riftling.evasion < EVA_CAP) {
+    riftling.evasion = Math.min(EVA_CAP, riftling.evasion + 2);
+  }
+  if (boosted === 'evasion' && riftling.evasion < EVA_CAP) {
+    riftling.evasion = Math.min(EVA_CAP, riftling.evasion + 2);
+  }
 
-  // Boost move power slightly every 3 levels
+  // Every 3 levels, bump move power a bit so enemy scaling keeps pace.
   if (riftling.level % 3 === 0) {
     for (const move of riftling.moves) move.power += 1;
   }
-
-  return gains;
 }
 
 /**
- * Award XP to a riftling and process any level-ups.
- * Returns level-up info if the riftling leveled, null otherwise.
+ * Award XP to a player riftling and process the level-up if one is reached.
+ * Only the level counter and XP are touched here — stat and move gains are
+ * applied later through the card UI (see `generateStatCards` + `applyStatCard`
+ * and `getUpgradeMoveForLevel` + `applyMoveUpgrade`).
  */
 export function awardXP(riftling: PartyRiftling, amount: number): LevelUpResult | null {
   if (riftling.level >= MAX_LEVEL) return null;
@@ -625,8 +809,8 @@ export function awardXP(riftling: PartyRiftling, amount: number): LevelUpResult 
 
   if (riftling.xp >= needed) {
     riftling.xp -= needed;
-    const gains = applyLevelUpGains(riftling);
-    return { riftling, gains };
+    riftling.level++;
+    return { riftling, newLevel: riftling.level };
   }
 
   return null;
@@ -634,15 +818,15 @@ export function awardXP(riftling: PartyRiftling, amount: number): LevelUpResult 
 
 /**
  * Create a riftling at a specific level by generating a level-1 instance and
- * running the level-up logic the required number of times.
- * Ensures enemy stats are derived from the same base-stat rolls and growth
- * rules as player riftlings — no separate scaling formulas.
+ * running the automatic level-up logic the required number of times.
+ * Used for enemy spawns and freshly recruited higher-level riftlings —
+ * players level up via the stat-card flow instead.
  */
 export function createRiftlingAtLevel(key: string, targetLevel: number): PartyRiftling {
   const riftling = createRiftling(key);  // level 1, randomized base stats + temperament
   const clampedTarget = Math.max(1, Math.min(MAX_LEVEL, targetLevel));
   for (let l = riftling.level; l < clampedTarget; l++) {
-    applyLevelUpGains(riftling);
+    applyAutoLevelUp(riftling);
   }
   riftling.hp = riftling.maxHp;  // enemies always spawn at full HP
   return riftling;
@@ -735,9 +919,12 @@ export function createRiftling(key: string): PartyRiftling {
   const evasion    = rollStat(r.evasion);
   return {
     ...tmpl,
+    // Deep-clone moves so per-instance upgrades/power bumps don't mutate the shared template.
+    moves: tmpl.moves.map((m) => ({ ...m })),
     maxHp, hp: maxHp,
     attack, defense, speed, attackSpeed, critRate, evasion,
     equipped: [0, 1], level: 1, xp: 0, temperament: randomTemperament(),
+    stance: 'push',
   };
 }
 
@@ -747,10 +934,19 @@ export const MAX_ACTIVE = 4;
 /** Max bench size */
 export const MAX_BENCH = 4;
 
+/**
+ * Saved combat formation. Offsets are in entry-local space:
+ * `right` runs along the entry wall, `forward` points into the room.
+ * Parallel to Party.active — index `i` is the slot for `active[i]`.
+ * A slot may be undefined (no saved position yet, or ally was added since).
+ */
+export type FormationOffset = { right: number; forward: number };
+
 export interface Party {
   active: PartyRiftling[];
   bench: PartyRiftling[];
   trinkets: import('./trinkets').TrinketInventory;
+  savedFormation?: (FormationOffset | undefined)[];
 }
 
 export function createStartingParty(starterKey: string = 'emberhound'): Party {

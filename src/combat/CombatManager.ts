@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { PartyRiftling, Move, MoveKind, Role, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, TYPE_COLORS, speciesScale } from '../data/party';
+import { PartyRiftling, Move, MoveKind, Role, Stance, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, TYPE_COLORS, speciesScale, FormationOffset } from '../data/party';
 import { EliteTeamMember } from '../data/room_templates';
 import { TrinketInventory, getEquippedBuffs, getRoleBuffs } from '../data/trinkets';
 import {
@@ -38,7 +38,11 @@ const SETUP_WALK_SPEED = 100;
 /** Distance threshold (px) to consider an ally "in position". */
 const SETUP_ARRIVE_DIST = 6;
 /** Max time (ms) for the setup phase before forcing combat start. */
-const SETUP_TIMEOUT_MS = 2500;
+const SETUP_TIMEOUT_MS = 5000;
+/** Click radius (px) for grabbing an ally during setup drag-and-drop. */
+const DRAG_GRAB_RADIUS = 20;
+/** Drop distance under which a drop counts as swapping with another ally slot. */
+const DRAG_SWAP_RADIUS = 18;
 
 /** Build a MoveSlot from a Move definition. Shared between allies and elite enemies. */
 function buildMoveSlot(m: Move): MoveSlot {
@@ -215,6 +219,13 @@ export interface CombatUnit {
   forcedTargetExpiry?: number;
   /** Class/role — drives passive damage, healing, and AI bias hooks. */
   role?: Role;
+  /** Current combat stance — drives player-commanded AI behavior. Allies only. */
+  stance?: Stance;
+  /** Back-ref to the party data so stance changes persist across rooms. Allies only. */
+  sourceData?: PartyRiftling;
+  /** Anchor position for Hold stance — set when Hold is assigned. Allies only. */
+  holdAnchorX?: number;
+  holdAnchorY?: number;
 }
 
 export interface DefeatedRiftling {
@@ -235,6 +246,7 @@ export class CombatManager {
   private walls: Phaser.Physics.Arcade.StaticGroup;
   private active = false;
   private onRoomCleared?: (defeated: DefeatedRiftling[]) => void;
+  private onPartyWiped?: () => void;
   private defeated: DefeatedRiftling[] = [];
   private _selectedAllyIndex = 0;
   private _xpEarned = 0;
@@ -247,27 +259,40 @@ export class CombatManager {
   private formationTargets: { x: number; y: number }[] = [];
   private enemyFormationTargets: { x: number; y: number }[] = [];
 
+  /** Entry-local basis for converting between world pixels and formation offsets. */
+  private entryBasis: {
+    anchorX: number;
+    anchorY: number;
+    rightX: number; rightY: number;
+    forwardX: number; forwardY: number;
+  } | null = null;
+  /** Current room pixel size — cached so drag code can clamp to bounds. */
+  private roomPixelW = 0;
+  private roomPixelH = 0;
+  /** Callback fired when setup phase ends, reporting the final ally offsets. */
+  private onFormationSaved?: (offsets: FormationOffset[]) => void;
+
+  /** Drag-and-drop state (setup phase only). */
+  private draggingIndex: number | null = null;
+  private dragGhost?: Phaser.GameObjects.Graphics;
+
+  /** Prep-phase banner — destroyed in beginCombat. */
+  private setupBanner?: Phaser.GameObjects.Text;
+
   // --- Player command state ---
 
   /** Focus target — all allies prioritize this enemy. */
   private _focusTarget: CombatUnit | null = null;
   private focusRing?: Phaser.GameObjects.Graphics;
 
-  /** Rally — allies sprint to trainer and hold. */
-  private _rallyActive = false;
-  private _rallyEndTime = 0;
-  private static readonly RALLY_DURATION = 2000;
-  private static readonly RALLY_SPEED_MULT = 1.5;
-
-  /** Per-ally reposition waypoints. */
-  private repositionTargets = new Map<CombatUnit, { x: number; y: number; resumeTime: number }>();
-  private repositionMarkers = new Map<CombatUnit, Phaser.GameObjects.Graphics>();
-  private static readonly REPOSITION_HOLD = 3000;
-
-  /** Unleash — team-wide signature burst. */
-  private _unleashCooldown = 0;
-  private _unleashReadyTime = 0;
-  private static readonly UNLEASH_COOLDOWN = 20000;
+  /** Distance allies try to stay within their Hold anchor before re-anchoring. */
+  private static readonly HOLD_LEASH = 64;
+  /** Distance allies try to stay within the trainer while Withdrawn. */
+  private static readonly WITHDRAW_LEASH = 28;
+  /** Soft distance — beyond this, Grouped allies return toward the centroid. */
+  private static readonly GROUP_RETURN = 36;
+  /** Hard distance — Grouped allies will not chase targets past this from the centroid. */
+  private static readonly GROUP_MAX_DRIFT = 56;
 
   // --- Navigation ---
   private nav: SimpleNav | null = null;
@@ -315,10 +340,35 @@ export class CombatManager {
      * AVAILABLE_RIFTLINGS when undefined or empty.
      */
     wildSpeciesPool?: string[],
+    /**
+     * Saved per-ally formation offsets from a previous fight. Parallel to
+     * `companions`. Slots may be undefined (no saved position yet). Invalid
+     * slots — wall, void, out-of-bounds, or overlapping an enemy spawn — fall
+     * back to the auto-computed formation for that ally only.
+     */
+    savedFormation?: (FormationOffset | undefined)[],
+    /**
+     * Fired when the setup phase ends with the final ally offsets in
+     * entry-local space, so the caller can persist them for the next fight.
+     */
+    onFormationSaved?: (offsets: FormationOffset[]) => void,
+    /**
+     * Fired when every ally in this encounter is KO'd. The scene is expected
+     * to handle the run-ending game-over flow (restart, recap, etc.).
+     */
+    onPartyWiped?: () => void,
   ): void {
     const pool = (wildSpeciesPool && wildSpeciesPool.length > 0) ? wildSpeciesPool : AVAILABLE_RIFTLINGS;
+    this.roomPixelW = roomPixelW;
+    this.roomPixelH = roomPixelH;
+    this.entryBasis = this.computeEntryBasis(entrySide, roomPixelW, roomPixelH);
+    this.onFormationSaved = onFormationSaved;
+    this.draggingIndex = null;
+    this.dragGhost?.destroy();
+    this.dragGhost = undefined;
     this.active = true;
     this.onRoomCleared = onCleared;
+    this.onPartyWiped = onPartyWiped;
     this.enemies = [];
     this.allies = [];
     this.defeated = [];
@@ -377,6 +427,8 @@ export class CombatManager {
         markedDamageBonus: 0,
         markedUntil: 0,
         role: c.data.role,
+        stance: c.data.stance ?? 'push',
+        sourceData: c.data,
       });
     }
 
@@ -464,8 +516,10 @@ export class CombatManager {
       });
     }
 
-    // Compute ally positions — spread out slightly near entry side
-    this.formationTargets = this.computeAllyFormation(companions, roomPixelW, roomPixelH, entrySide);
+    // Compute ally auto-formation here; saved-formation restoration runs
+    // after enemy positions are finalized so validation can check overlap.
+    const autoFormation = this.computeAllyFormation(companions, roomPixelW, roomPixelH, entrySide);
+    this.formationTargets = autoFormation;
 
     // Derive enemy level from difficulty so deeper rooms spawn higher-level riftlings,
     // floored at the party's average level (never fall behind) and capped at
@@ -582,10 +636,157 @@ export class CombatManager {
       this.enemies.push(enemy);
     }
 
-    // Formation targets drive the setup-phase walk. For wild encounters these
-    // equal the initial positions (no visible walk); for elite encounters the
-    // squad marches from the trainer anchor out to authored lane positions.
     this.enemyFormationTargets = formationPositions;
+
+    // Apply saved ally formation now that enemy slots are known — per-slot
+    // fallback to auto when the saved offset resolves to an invalid tile.
+    if (savedFormation && this.entryBasis) {
+      this.formationTargets = autoFormation.map((auto, i) => {
+        const saved = savedFormation[i];
+        if (!saved) return auto;
+        const world = this.offsetToWorld(saved);
+        return this.isFormationSlotValid(world.x, world.y) ? world : auto;
+      });
+    }
+
+    // Teleport both sides to their final formation so the player sees the
+    // layout from frame 0 of the setup phase and can drag allies into place.
+    for (let i = 0; i < this.allies.length; i++) {
+      const t = this.formationTargets[i];
+      if (t) this.allies[i].sprite.setPosition(t.x, t.y);
+    }
+    for (let i = 0; i < this.enemies.length; i++) {
+      const t = this.enemyFormationTargets[i];
+      if (t) this.enemies[i].sprite.setPosition(t.x, t.y);
+    }
+
+    this.faceUnitsForSetup();
+    this.createSetupBanner();
+  }
+
+  /** Point each unit at the nearest opponent so the prep phase reads correctly. */
+  private faceUnitsForSetup(): void {
+    const face = (unit: CombatUnit, pool: CombatUnit[]) => {
+      const target = this.nearestLiving(unit, pool);
+      if (!target) return;
+      const dir = this.getDirection(
+        target.sprite.x - unit.sprite.x,
+        target.sprite.y - unit.sprite.y,
+      );
+      this.unitLastDir.set(unit, dir);
+      stopWalkAnim(unit.sprite, unit.texturePrefix, dir);
+    };
+    for (const ally of this.allies) if (ally.alive) face(ally, this.enemies);
+    for (const enemy of this.enemies) if (enemy.alive) face(enemy, this.allies);
+  }
+
+  private nearestLiving(from: CombatUnit, pool: CombatUnit[]): CombatUnit | null {
+    let best: CombatUnit | null = null;
+    let bestD = Infinity;
+    for (const u of pool) {
+      if (!u.alive) continue;
+      const dx = u.sprite.x - from.sprite.x;
+      const dy = u.sprite.y - from.sprite.y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = u;
+      }
+    }
+    return best;
+  }
+
+  /** Prep-phase HUD: pulsing banner. */
+  private createSetupBanner(): void {
+    this.destroySetupVisuals();
+
+    const cam = this.scene.cameras.main;
+    this.setupBanner = this.scene.add
+      .text(cam.width / 2, 18, 'PREP PHASE — drag to position', {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#ffe680',
+        backgroundColor: '#000000aa',
+        padding: { x: 8, y: 4 },
+        stroke: '#000000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(600)
+      .setScrollFactor(0);
+
+    this.scene.tweens.add({
+      targets: this.setupBanner,
+      alpha: { from: 1, to: 0.65 },
+      duration: 700,
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  private destroySetupVisuals(): void {
+    if (this.setupBanner) {
+      this.scene.tweens.killTweensOf(this.setupBanner);
+      this.setupBanner.destroy();
+      this.setupBanner = undefined;
+    }
+  }
+
+  // --- Entry-local space helpers ---
+
+  /**
+   * Build an entry-local basis: `anchor` on the midpoint of the entry wall,
+   * `forward` pointing into the room, `right` along the entry wall. Storing
+   * formation offsets in this space means a fight entered from a different
+   * side rotates naturally instead of dumping allies into a wall.
+   */
+  private computeEntryBasis(
+    entrySide: 'north' | 'south' | 'east' | 'west',
+    roomW: number,
+    roomH: number,
+  ) {
+    switch (entrySide) {
+      case 'south': return { anchorX: roomW / 2, anchorY: roomH,    rightX:  1, rightY:  0, forwardX:  0, forwardY: -1 };
+      case 'north': return { anchorX: roomW / 2, anchorY: 0,        rightX: -1, rightY:  0, forwardX:  0, forwardY:  1 };
+      case 'west':  return { anchorX: 0,         anchorY: roomH / 2, rightX:  0, rightY:  1, forwardX:  1, forwardY:  0 };
+      case 'east':  return { anchorX: roomW,     anchorY: roomH / 2, rightX:  0, rightY: -1, forwardX: -1, forwardY:  0 };
+    }
+  }
+
+  private offsetToWorld(offset: FormationOffset): { x: number; y: number } {
+    const b = this.entryBasis!;
+    return {
+      x: b.anchorX + offset.right * b.rightX + offset.forward * b.forwardX,
+      y: b.anchorY + offset.right * b.rightY + offset.forward * b.forwardY,
+    };
+  }
+
+  private worldToOffset(x: number, y: number): FormationOffset {
+    const b = this.entryBasis!;
+    const dx = x - b.anchorX;
+    const dy = y - b.anchorY;
+    return {
+      right: dx * b.rightX + dy * b.rightY,
+      forward: dx * b.forwardX + dy * b.forwardY,
+    };
+  }
+
+  /**
+   * A formation slot is valid when it is inside the room bounds, sits on a
+   * walkable nav tile, and doesn't overlap any enemy's spawn position.
+   */
+  private isFormationSlotValid(x: number, y: number): boolean {
+    const margin = 16;
+    if (x < margin || y < margin || x > this.roomPixelW - margin || y > this.roomPixelH - margin) {
+      return false;
+    }
+    if (this.nav && !this.nav.isWalkableAt(x, y)) return false;
+    for (const t of this.enemyFormationTargets) {
+      const dx = t.x - x;
+      const dy = t.y - y;
+      if (dx * dx + dy * dy < 20 * 20) return false;
+    }
+    return true;
   }
 
   get isActive(): boolean {
@@ -649,7 +850,6 @@ export class CombatManager {
 
     // Draw command visuals
     this.drawFocusRing();
-    this.drawRepositionMarkers();
 
     this.checkCombatEnd();
   }
@@ -791,59 +991,216 @@ export class CombatManager {
   }
 
   private updateCompanionAI(comp: CombatUnit, time: number, trainerSprite?: Phaser.Physics.Arcade.Sprite): void {
-    // --- Rally override: sprint to trainer ---
-    if (this._rallyActive && trainerSprite) {
-      if (time >= this._rallyEndTime) {
-        this._rallyActive = false;
+    const stance: Stance = comp.stance ?? 'push';
+
+    // --- Withdraw stance: retreat to trainer, kite if enemies are close ---
+    if (stance === 'withdraw' && trainerSprite) {
+      const tdx = trainerSprite.x - comp.sprite.x;
+      const tdy = trainerSprite.y - comp.sprite.y;
+      const tDist = Math.sqrt(tdx * tdx + tdy * tdy);
+
+      // Find nearest enemy for kite + opportunistic attacks
+      let nearest: CombatUnit | null = null;
+      let nearestDist = Infinity;
+      for (const enemy of this.enemies) {
+        if (!enemy.alive) continue;
+        const ex = enemy.sprite.x - comp.sprite.x;
+        const ey = enemy.sprite.y - comp.sprite.y;
+        const ed = Math.sqrt(ex * ex + ey * ey);
+        if (ed < nearestDist) { nearestDist = ed; nearest = enemy; }
+      }
+
+      if (tDist > CombatManager.WITHDRAW_LEASH) {
+        // Still retreating — walk toward trainer
+        const { nx, ny } = this.moveUnitToward(comp, trainerSprite.x, trainerSprite.y, comp.speed, time);
+        const dir = this.getDirection(nx, ny);
+        this.unitLastDir.set(comp, dir);
+        playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+        // Fire back at pursuers while retreating
+        if (nearest && nearestDist <= comp.attackRange) {
+          if (comp.moveSlots && comp.moveSlots.length > 0) this.tryUseMove(comp, nearest, time);
+          else if (time - comp.lastAttackTime > comp.attackCooldown) {
+            comp.lastAttackTime = time; this.dealDamage(comp, nearest);
+          }
+        }
+        return;
+      }
+      // Regrouped near trainer — hold position, attack in range
+      stopWalkAnim(comp.sprite, comp.texturePrefix, this.unitLastDir.get(comp) ?? 'south');
+      comp.sprite.setVelocity(0, 0);
+      if (nearest && nearestDist <= comp.attackRange * 1.2) {
+        const faceDir = this.getDirection(nearest.sprite.x - comp.sprite.x, nearest.sprite.y - comp.sprite.y);
+        this.unitLastDir.set(comp, faceDir);
+        if (comp.moveSlots && comp.moveSlots.length > 0) this.tryUseMove(comp, nearest, time);
+        else if (time - comp.lastAttackTime > comp.attackCooldown) {
+          comp.lastAttackTime = time; this.dealDamage(comp, nearest);
+        }
+      }
+      return;
+    }
+
+    // --- Group stance: engage like Push, but rubber-band back to the ally
+    //     centroid so backline attackers stay in support range of the group. ---
+    if (stance === 'group') {
+      let cx = 0, cy = 0, n = 0;
+      for (const a of this.allies) {
+        if (!a.alive) continue;
+        cx += a.sprite.x; cy += a.sprite.y; n++;
+      }
+      if (n === 0) {
+        comp.sprite.setVelocity(0, 0);
+        return;
+      }
+      cx /= n; cy /= n;
+      const dCx = comp.sprite.x - cx;
+      const dCy = comp.sprite.y - cy;
+      const dCent = Math.sqrt(dCx * dCx + dCy * dCy);
+
+      // Pick a target — focus first, otherwise the nearest enemy whose
+      // position is within striking range of the group.
+      let target: CombatUnit | null = null;
+      let targetDist = Infinity;
+      if (this._focusTarget?.alive) {
+        const fx = this._focusTarget.sprite.x - comp.sprite.x;
+        const fy = this._focusTarget.sprite.y - comp.sprite.y;
+        target = this._focusTarget;
+        targetDist = Math.sqrt(fx * fx + fy * fy);
       } else {
-        const dx = trainerSprite.x - comp.sprite.x;
-        const dy = trainerSprite.y - comp.sprite.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > 20) {
-          const spd = comp.speed * CombatManager.RALLY_SPEED_MULT;
-          const { nx, ny } = this.moveUnitToward(comp, trainerSprite.x, trainerSprite.y, spd, time);
+        for (const e of this.enemies) {
+          if (!e.alive) continue;
+          // Only consider enemies close enough to the group that engaging
+          // them wouldn't drag the unit past the hard drift limit.
+          const ecx = e.sprite.x - cx;
+          const ecy = e.sprite.y - cy;
+          if (Math.sqrt(ecx * ecx + ecy * ecy) > CombatManager.GROUP_MAX_DRIFT + comp.attackRange) continue;
+          const dx = e.sprite.x - comp.sprite.x;
+          const dy = e.sprite.y - comp.sprite.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < targetDist) { targetDist = d; target = e; }
+        }
+      }
+
+      // No target → return toward centroid, then idle there.
+      if (!target) {
+        if (dCent > CombatManager.GROUP_RETURN) {
+          const { nx, ny } = this.moveUnitToward(comp, cx, cy, comp.speed, time);
           const dir = this.getDirection(nx, ny);
           this.unitLastDir.set(comp, dir);
           playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
         } else {
-          const idleDir = this.unitLastDir.get(comp) ?? 'south';
-          stopWalkAnim(comp.sprite, comp.texturePrefix, idleDir);
+          stopWalkAnim(comp.sprite, comp.texturePrefix, this.unitLastDir.get(comp) ?? 'south');
           comp.sprite.setVelocity(0, 0);
         }
         return;
       }
+
+      const sep = this.getSeparation(comp, this.allies);
+
+      if (targetDist <= comp.attackRange) {
+        // In range — face and attack, only drift via separation
+        const faceDir = this.getDirection(target.sprite.x - comp.sprite.x, target.sprite.y - comp.sprite.y);
+        this.unitLastDir.set(comp, faceDir);
+        if (!isPlayingAttackAnim(comp.sprite, comp.texturePrefix)) {
+          stopWalkAnim(comp.sprite, comp.texturePrefix, faceDir);
+        }
+        comp.sprite.setVelocity(sep.vx, sep.vy);
+        if (comp.moveSlots && comp.moveSlots.length > 0) this.tryUseMove(comp, target, time);
+        else if (time - comp.lastAttackTime > comp.attackCooldown) {
+          comp.lastAttackTime = time; this.dealDamage(comp, target);
+        }
+        return;
+      }
+
+      // Out of range — chase toward target unless we're already at the drift
+      // limit; in that case, fall back toward the group instead.
+      if (dCent >= CombatManager.GROUP_MAX_DRIFT) {
+        const { nx, ny } = this.moveUnitToward(comp, cx, cy, comp.speed, time);
+        const dir = this.getDirection(nx + sep.vx, ny + sep.vy);
+        this.unitLastDir.set(comp, dir);
+        playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+      } else {
+        const { nx, ny } = this.moveUnitToward(comp, target.sprite.x, target.sprite.y, comp.speed, time);
+        const dir = this.getDirection(nx + sep.vx, ny + sep.vy);
+        this.unitLastDir.set(comp, dir);
+        playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+      }
+      return;
     }
 
-    // --- Reposition override: walk to waypoint, hold, then resume ---
-    const repo = this.repositionTargets.get(comp);
-    if (repo) {
-      const dx = repo.x - comp.sprite.x;
-      const dy = repo.y - comp.sprite.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 8) {
-        // Walk to target via nav
-        const { nx, ny } = this.moveUnitToward(comp, repo.x, repo.y, comp.speed, time);
+    // --- Hold stance: anchor + only engage enemies within leash of the anchor ---
+    if (stance === 'hold') {
+      if (comp.holdAnchorX === undefined) {
+        comp.holdAnchorX = comp.sprite.x;
+        comp.holdAnchorY = comp.sprite.y;
+      }
+      const ax = comp.holdAnchorX!;
+      const ay = comp.holdAnchorY!;
+
+      // Find nearest enemy whose position is within leash of the anchor
+      let target: CombatUnit | null = null;
+      let targetDist = Infinity;
+      if (this._focusTarget?.alive) {
+        const edx = this._focusTarget.sprite.x - ax;
+        const edy = this._focusTarget.sprite.y - ay;
+        if (Math.sqrt(edx * edx + edy * edy) <= CombatManager.HOLD_LEASH) {
+          target = this._focusTarget;
+          const tdx = this._focusTarget.sprite.x - comp.sprite.x;
+          const tdy = this._focusTarget.sprite.y - comp.sprite.y;
+          targetDist = Math.sqrt(tdx * tdx + tdy * tdy);
+        }
+      }
+      if (!target) {
+        for (const e of this.enemies) {
+          if (!e.alive) continue;
+          const adx = e.sprite.x - ax;
+          const ady = e.sprite.y - ay;
+          if (Math.sqrt(adx * adx + ady * ady) > CombatManager.HOLD_LEASH) continue;
+          const dx = e.sprite.x - comp.sprite.x;
+          const dy = e.sprite.y - comp.sprite.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < targetDist) { targetDist = d; target = e; }
+        }
+      }
+
+      if (!target) {
+        // No valid target — drift back toward anchor if wandered off, otherwise idle
+        const adx = ax - comp.sprite.x;
+        const ady = ay - comp.sprite.y;
+        const adist = Math.sqrt(adx * adx + ady * ady);
+        if (adist > 6) {
+          const { nx, ny } = this.moveUnitToward(comp, ax, ay, comp.speed * 0.8, time);
+          const dir = this.getDirection(nx, ny);
+          this.unitLastDir.set(comp, dir);
+          playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+        } else {
+          stopWalkAnim(comp.sprite, comp.texturePrefix, this.unitLastDir.get(comp) ?? 'south');
+          comp.sprite.setVelocity(0, 0);
+        }
+        return;
+      }
+
+      // Engage target — move into range but never past the anchor leash
+      if (targetDist > comp.attackRange) {
+        const { nx, ny } = this.moveUnitToward(comp, target.sprite.x, target.sprite.y, comp.speed, time);
         const dir = this.getDirection(nx, ny);
         this.unitLastDir.set(comp, dir);
         playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
-        return;
+      } else {
+        const faceDir = this.getDirection(target.sprite.x - comp.sprite.x, target.sprite.y - comp.sprite.y);
+        this.unitLastDir.set(comp, faceDir);
+        if (!isPlayingAttackAnim(comp.sprite, comp.texturePrefix)) {
+          stopWalkAnim(comp.sprite, comp.texturePrefix, faceDir);
+        }
+        comp.sprite.setVelocity(0, 0);
       }
-      // At target — stop walk anim
-      stopWalkAnim(comp.sprite, comp.texturePrefix, this.unitLastDir.get(comp) ?? 'south');
-      // At target — hold until resume time, but still attack enemies in range
-      comp.sprite.setVelocity(0, 0);
-      if (time < repo.resumeTime) {
-        // Attack enemies in range while holding position
-        this.tryAttackNearestEnemy(comp, time);
-        return;
+      if (comp.moveSlots && comp.moveSlots.length > 0) this.tryUseMove(comp, target, time);
+      else if (time - comp.lastAttackTime > comp.attackCooldown) {
+        comp.lastAttackTime = time; this.dealDamage(comp, target);
       }
-      // Hold expired — resume normal AI
-      this.repositionTargets.delete(comp);
-      const marker = this.repositionMarkers.get(comp);
-      if (marker) { marker.destroy(); this.repositionMarkers.delete(comp); }
+      return;
     }
 
-    // --- Normal AI with focus target priority ---
+    // --- Push stance (default): normal aggressive AI with focus target priority ---
     let target: CombatUnit | null = null;
     let targetDist = Infinity;
 
@@ -904,9 +1261,12 @@ export class CombatManager {
     // Role passive: Skirmisher "wounded animal" speed boost when below half HP
     const moveSpeed = comp.speed * getRoleSpeedMultiplier(comp.role, comp.hp / Math.max(1, comp.maxHp));
 
-    // Role passive: Striker/Caster kite — find the closest enemy crowding us
+    // Role passive: Striker/Caster kite — ranged kiters back off a crowding
+    // enemy, but only while their target is comfortably inside attack range.
+    // Melee kiters (attackRange <= KITE_RADIUS) never retreat from their prey.
     let kiteFromX = 0, kiteFromY = 0, shouldKite = false;
-    if (isKitingRole(comp.role)) {
+    if (isKitingRole(comp.role) && comp.attackRange > KITE_RADIUS
+        && targetDist < comp.attackRange * 0.9) {
       let crowdDist = KITE_RADIUS;
       for (const enemy of this.enemies) {
         if (!enemy.alive) continue;
@@ -960,33 +1320,6 @@ export class CombatManager {
         comp.lastAttackTime = time;
         this.dealDamage(comp, target);
       }
-    }
-  }
-
-  /** Attack nearest enemy in range without moving (used during reposition hold). */
-  private tryAttackNearestEnemy(comp: CombatUnit, time: number): void {
-    let nearest: CombatUnit | null = null;
-    let nearestDist = Infinity;
-    for (const enemy of this.enemies) {
-      if (!enemy.alive) continue;
-      const dx = enemy.sprite.x - comp.sprite.x;
-      const dy = enemy.sprite.y - comp.sprite.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < nearestDist) { nearestDist = dist; nearest = enemy; }
-    }
-    if (!nearest || nearestDist > comp.attackRange * 1.5) return;
-    const ndx = nearest.sprite.x - comp.sprite.x;
-    const ndy = nearest.sprite.y - comp.sprite.y;
-    const faceDir = this.getDirection(ndx, ndy);
-    this.unitLastDir.set(comp, faceDir);
-    if (!isPlayingAttackAnim(comp.sprite, comp.texturePrefix)) {
-      stopWalkAnim(comp.sprite, comp.texturePrefix, faceDir);
-    }
-    if (comp.moveSlots && comp.moveSlots.length > 0) {
-      this.tryUseMove(comp, nearest, time);
-    } else if (time - comp.lastAttackTime > comp.attackCooldown) {
-      comp.lastAttackTime = time;
-      this.dealDamage(comp, nearest);
     }
   }
 
@@ -1196,7 +1529,8 @@ export class CombatManager {
     if (aliveAllies.length === 0) {
       this.active = false;
       this.cleanupCommandState();
-      // TODO: all companions KO — swap from bench or game over
+      for (const ally of this.allies) ally.hpBar.clear();
+      this.onPartyWiped?.();
     }
   }
 
@@ -1204,8 +1538,6 @@ export class CombatManager {
     this._focusTarget = null;
     this.focusRing?.destroy();
     this.focusRing = undefined;
-    this._rallyActive = false;
-    this.clearAllRepositions();
   }
 
   // --- Status Effect System ---
@@ -2712,127 +3044,45 @@ export class CombatManager {
   }
 
   /**
-   * Rally — all allies sprint to the trainer and hold close.
+   * Set the stance on the ally at the given index (matches DungeonScene's
+   * selectedIndex, not the internal `_selectedAllyIndex`). Writes through to
+   * the PartyRiftling so the stance persists across rooms.
    */
-  rally(time: number): void {
-    if (!this.active || this._rallyActive) return;
-    this._rallyActive = true;
-    this._rallyEndTime = time + CombatManager.RALLY_DURATION;
-    // Clear any individual repositions
-    this.clearAllRepositions();
-  }
-
-  get rallyActive(): boolean {
-    return this._rallyActive;
-  }
-
-  /**
-   * Reposition — send the selected ally to a specific point.
-   */
-  repositionSelected(worldX: number, worldY: number, time: number): boolean {
+  setStanceForIndex(index: number, stance: Stance): boolean {
     if (!this.active) return false;
-    const ally = this.getSelectedAlly();
-    if (!ally) return false;
-
-    // Clear rally if repositioning individually
-    this._rallyActive = false;
-
-    this.repositionTargets.set(ally, {
-      x: worldX,
-      y: worldY,
-      resumeTime: time + CombatManager.REPOSITION_HOLD,
-    });
-
-    // Create waypoint marker
-    let marker = this.repositionMarkers.get(ally);
-    if (!marker) {
-      marker = this.scene.add.graphics().setDepth(198);
-      this.repositionMarkers.set(ally, marker);
-    }
+    const ally = this.allies[index];
+    if (!ally || !ally.alive) return false;
+    this.assignStance(ally, stance);
     return true;
   }
 
-  private drawRepositionMarkers(): void {
-    for (const [ally, target] of this.repositionTargets) {
-      const marker = this.repositionMarkers.get(ally);
-      if (!marker) continue;
-      marker.clear();
-      if (!ally.alive) {
-        this.repositionTargets.delete(ally);
-        marker.destroy();
-        this.repositionMarkers.delete(ally);
-        continue;
-      }
-      // Small diamond marker at the target point
-      const { x, y } = target;
-      const isSelected = this.allies[this._selectedAllyIndex] === ally;
-      const color = isSelected ? 0x44aaff : 0x3388cc;
-      const alpha = 0.4 + 0.3 * Math.sin(this.scene.time.now * 0.005);
-      marker.lineStyle(1, color, alpha);
-      marker.strokeCircle(x, y, 6);
-      marker.fillStyle(color, alpha * 0.3);
-      marker.fillCircle(x, y, 6);
-    }
-  }
-
-  private clearAllRepositions(): void {
-    for (const marker of this.repositionMarkers.values()) marker.destroy();
-    this.repositionMarkers.clear();
-    this.repositionTargets.clear();
-  }
-
   /**
-   * Unleash — all allies fire their signature move simultaneously.
-   * Returns false if still on cooldown.
+   * Set the stance on every living ally. Used for the shift+key "whole squad"
+   * shortcut.
    */
-  unleash(time: number): boolean {
-    if (!this.active) return false;
-    if (time < this._unleashReadyTime) return false;
-
-    this._unleashReadyTime = time + CombatManager.UNLEASH_COOLDOWN;
-    this._rallyActive = false;
-
+  setAllStances(stance: Stance): void {
+    if (!this.active) return;
     for (const ally of this.allies) {
-      if (!ally.alive || !ally.moveSlots) continue;
-      // Find the signature move
-      const sigIdx = ally.moveSlots.findIndex((s) => s.isSignature);
-      if (sigIdx < 0) continue;
-      const slot = ally.moveSlots[sigIdx];
-
-      // Find nearest enemy target
-      let nearest: CombatUnit | null = null;
-      let nearestDist = Infinity;
-      for (const enemy of this.enemies) {
-        if (!enemy.alive) continue;
-        const dx = enemy.sprite.x - ally.sprite.x;
-        const dy = enemy.sprite.y - ally.sprite.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < nearestDist) {
-          nearestDist = dist;
-          nearest = enemy;
-        }
-      }
-      if (!nearest) continue;
-
-      const target = this.pickMoveTarget(ally, slot, nearest, time);
-      if (!target) continue;
-
-      // Fire the signature move, bypassing its normal cooldown
-      slot.lastUsedTime = time;
-      ally.lastMoveIndex = sigIdx;
-      this.dealMoveDamage(ally, target, slot);
+      if (!ally.alive) continue;
+      this.assignStance(ally, stance);
     }
-
-    // Camera flash for team ultimate
-    this.scene.cameras.main.flash(200, 255, 220, 100);
-    return true;
   }
 
-  /** Unleash cooldown ratio (0 = ready, 1 = just used). */
-  getUnleashCooldownRatio(time: number): number {
-    if (time >= this._unleashReadyTime) return 0;
-    const remaining = this._unleashReadyTime - time;
-    return remaining / CombatManager.UNLEASH_COOLDOWN;
+  private assignStance(ally: CombatUnit, stance: Stance): void {
+    ally.stance = stance;
+    if (ally.sourceData) ally.sourceData.stance = stance;
+    if (stance === 'hold') {
+      ally.holdAnchorX = ally.sprite.x;
+      ally.holdAnchorY = ally.sprite.y;
+    } else {
+      ally.holdAnchorX = undefined;
+      ally.holdAnchorY = undefined;
+    }
+  }
+
+  /** Get the stance of the ally at the given index, or 'push' as a default. */
+  getStanceForIndex(index: number): Stance {
+    return this.allies[index]?.stance ?? 'push';
   }
 
   /**
@@ -2942,17 +3192,170 @@ export class CombatManager {
   }
 
   /**
-   * Setup phase tick: both sides walk to formation positions.
-   * Transitions to live combat when everyone arrives or timeout expires.
+   * Setup phase tick. Allies and enemies are teleported to formation up
+   * front, so this just idles their velocity, redraws the drag ghost, and
+   * commits combat when the timer expires. The timeout is held while the
+   * player is actively dragging so a mid-drag auto-start can't happen.
    */
   private updateSetupPhase(time: number): void {
-    const alliesReady = this.walkUnitsToTargets(this.allies, this.formationTargets);
-    const enemiesReady = this.walkUnitsToTargets(this.enemies, this.enemyFormationTargets);
+    for (let i = 0; i < this.allies.length; i++) {
+      if (i === this.draggingIndex) continue;
+      const ally = this.allies[i];
+      if (ally.alive) {
+        ally.sprite.setVelocity(0, 0);
+        stopWalkAnim(ally.sprite, ally.texturePrefix, this.unitLastDir.get(ally) ?? 'south');
+      }
+    }
+    for (const enemy of this.enemies) {
+      if (enemy.alive) {
+        enemy.sprite.setVelocity(0, 0);
+        stopWalkAnim(enemy.sprite, enemy.texturePrefix, this.unitLastDir.get(enemy) ?? 'south');
+      }
+    }
+
+    this.drawDragGhost();
+
+    if (this.draggingIndex !== null) {
+      // Hold the clock while the player is mid-drag.
+      this.setupStartTime = time - Math.min(time - this.setupStartTime, SETUP_TIMEOUT_MS - 1);
+      this.updateSetupBanner(SETUP_TIMEOUT_MS);
+      return;
+    }
 
     const elapsed = time - this.setupStartTime;
-    if ((alliesReady && enemiesReady) || elapsed >= SETUP_TIMEOUT_MS) {
+    this.updateSetupBanner(Math.max(0, SETUP_TIMEOUT_MS - elapsed));
+    if (elapsed >= SETUP_TIMEOUT_MS) {
       this.beginCombat();
     }
+  }
+
+  private updateSetupBanner(remainingMs: number): void {
+    if (!this.setupBanner) return;
+    const secs = Math.ceil(remainingMs / 1000);
+    this.setupBanner.setText(`PREP PHASE — drag to position   ${secs}s`);
+  }
+
+  // --- Drag-and-drop setup API ---
+
+  /** True while the player is mid-drag on an ally. */
+  get isDraggingSetup(): boolean {
+    return this.draggingIndex !== null;
+  }
+
+  /**
+   * Attempt to grab an ally at the given world-space point. Only succeeds
+   * during the setup phase, when no drag is in progress, and when a living
+   * ally sprite is within `DRAG_GRAB_RADIUS`. Returns true on success.
+   */
+  tryStartDrag(worldX: number, worldY: number): boolean {
+    if (!this.setupPhase || this.draggingIndex !== null) return false;
+    let bestDist = DRAG_GRAB_RADIUS;
+    let bestIndex = -1;
+    for (let i = 0; i < this.allies.length; i++) {
+      const ally = this.allies[i];
+      if (!ally.alive) continue;
+      const dx = ally.sprite.x - worldX;
+      const dy = ally.sprite.y - worldY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = i;
+      }
+    }
+    if (bestIndex < 0) return false;
+    this.draggingIndex = bestIndex;
+    this.dragGhost?.destroy();
+    this.dragGhost = this.scene.add.graphics().setDepth(250);
+    return true;
+  }
+
+  /** Move the dragged ally's sprite to follow the pointer. */
+  updateDrag(worldX: number, worldY: number): void {
+    if (this.draggingIndex === null) return;
+    const ally = this.allies[this.draggingIndex];
+    if (!ally?.alive) {
+      this.cancelDrag();
+      return;
+    }
+    ally.sprite.setPosition(worldX, worldY);
+    ally.sprite.setVelocity(0, 0);
+  }
+
+  /**
+   * Drop the held ally. If the drop lands on another ally's slot, swap the
+   * two. If the drop lands on an invalid tile (wall, out of bounds, enemy
+   * overlap), snap to the nearest valid walkable tile.
+   */
+  endDrag(): void {
+    if (this.draggingIndex === null) return;
+    const idx = this.draggingIndex;
+    const ally = this.allies[idx];
+    this.draggingIndex = null;
+    this.dragGhost?.destroy();
+    this.dragGhost = undefined;
+    if (!ally?.alive) return;
+
+    const dropX = ally.sprite.x;
+    const dropY = ally.sprite.y;
+
+    // Swap with another ally if the drop is close to their current slot.
+    for (let j = 0; j < this.allies.length; j++) {
+      if (j === idx) continue;
+      const other = this.allies[j];
+      if (!other.alive) continue;
+      const ox = this.formationTargets[j]?.x ?? other.sprite.x;
+      const oy = this.formationTargets[j]?.y ?? other.sprite.y;
+      const dx = ox - dropX;
+      const dy = oy - dropY;
+      if (dx * dx + dy * dy < DRAG_SWAP_RADIUS * DRAG_SWAP_RADIUS) {
+        const prevSelf = this.formationTargets[idx];
+        this.formationTargets[idx] = { x: ox, y: oy };
+        this.formationTargets[j] = prevSelf;
+        ally.sprite.setPosition(ox, oy);
+        other.sprite.setPosition(prevSelf.x, prevSelf.y);
+        return;
+      }
+    }
+
+    // No swap — validate and snap if needed.
+    let finalX = dropX;
+    let finalY = dropY;
+    if (!this.isFormationSlotValid(finalX, finalY)) {
+      if (this.nav) {
+        const snapped = this.nav.snapToWalkable(finalX, finalY);
+        finalX = snapped.x;
+        finalY = snapped.y;
+      }
+      if (!this.isFormationSlotValid(finalX, finalY)) {
+        // Still invalid — revert to the previous formation slot.
+        const prev = this.formationTargets[idx];
+        finalX = prev.x;
+        finalY = prev.y;
+      }
+    }
+    this.formationTargets[idx] = { x: finalX, y: finalY };
+    ally.sprite.setPosition(finalX, finalY);
+  }
+
+  private cancelDrag(): void {
+    this.draggingIndex = null;
+    this.dragGhost?.destroy();
+    this.dragGhost = undefined;
+  }
+
+  /** Ghost outline + slot markers to telegraph drag state. */
+  private drawDragGhost(): void {
+    if (!this.dragGhost) return;
+    this.dragGhost.clear();
+    if (this.draggingIndex === null) return;
+    const ally = this.allies[this.draggingIndex];
+    if (!ally?.alive) return;
+    const valid = this.isFormationSlotValid(ally.sprite.x, ally.sprite.y);
+    const color = valid ? 0x44ff88 : 0xff4444;
+    this.dragGhost.lineStyle(1.5, color, 0.9);
+    this.dragGhost.strokeCircle(ally.sprite.x, ally.sprite.y, 14);
+    this.dragGhost.lineStyle(1, color, 0.4);
+    this.dragGhost.strokeCircle(ally.sprite.x, ally.sprite.y, 18);
   }
 
   /** Walk a set of units toward their target positions. Returns true if all have arrived. */
@@ -2989,6 +3392,17 @@ export class CombatManager {
    */
   private beginCombat(): void {
     this.setupPhase = false;
+    this.cancelDrag();
+    this.destroySetupVisuals();
+
+    // Persist the final formation so the next fight restores it.
+    if (this.onFormationSaved && this.entryBasis) {
+      const offsets: FormationOffset[] = this.formationTargets.map((t) =>
+        this.worldToOffset(t.x, t.y),
+      );
+      this.onFormationSaved(offsets);
+    }
+
     for (const ally of this.allies) {
       if (ally.alive) ally.sprite.setVelocity(0, 0);
     }
@@ -3109,6 +3523,7 @@ export class CombatManager {
   }
 
   destroy(): void {
+    this.destroySetupVisuals();
     if (this.regenTimer) {
       this.regenTimer.destroy();
       this.regenTimer = undefined;

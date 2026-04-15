@@ -988,6 +988,342 @@ export const JUNGLE_TEST_ROOM: RoomTemplate = (() => {
   } as RoomTemplate & { __editorKey: string });
 })();
 
+// --- Dark Forest variant: "Choked Thicket" ---
+// Close-quarters combat variant of the dark_forest biome. Where Twisted Grove
+// uses 6 widely-spaced clumps with open sightlines, Choked Thicket packs 9
+// smaller 2x2 tree clumps in a zig-zag pattern that forces the player and
+// enemies into tight flanking lanes. Good for melee-heavy encounters.
+export const CHOKED_THICKET_ROOM: RoomTemplate = (() => {
+  const room = makeRoom(
+    'combat',
+    'Choked Thicket',
+    [{ x: 10, y: 5 }, { x: 20, y: 5 }, { x: 15, y: 10 }, { x: 8, y: 14 }, { x: 22, y: 14 }],
+  );
+  const clumps: { x: number; y: number }[] = [
+    { x: 3,  y: 3  },
+    { x: 13, y: 3  },
+    { x: 23, y: 3  },
+    { x: 8,  y: 7  },
+    { x: 18, y: 7  },
+    { x: 4,  y: 12 },
+    { x: 14, y: 11 },
+    { x: 24, y: 11 },
+    { x: 10, y: 15 },
+    { x: 20, y: 15 },
+  ];
+  for (const c of clumps) {
+    room.tiles[c.y][c.x]         = 2;
+    room.tiles[c.y][c.x + 1]     = 2;
+    room.tiles[c.y + 1][c.x]     = 2;
+    room.tiles[c.y + 1][c.x + 1] = 2;
+  }
+  room.biome = 'dark_forest';
+  room.decorations = [
+    // Trees on each clump — alternating species for variety
+    { sprite: 'dark_pine_tree',    x: 4,  y: 3.5  },
+    { sprite: 'twisted_dark_tree', x: 14, y: 3.5  },
+    { sprite: 'dark_pine_tree',    x: 24, y: 3.5  },
+    { sprite: 'twisted_dark_tree', x: 9,  y: 7.5  },
+    { sprite: 'dark_pine_tree',    x: 19, y: 7.5  },
+    { sprite: 'twisted_dark_tree', x: 5,  y: 12.5 },
+    { sprite: 'corrupted_tree',    x: 15, y: 11.5 },
+    { sprite: 'twisted_dark_tree', x: 25, y: 11.5 },
+    { sprite: 'dark_pine_tree',    x: 11, y: 15.5 },
+    { sprite: 'dark_pine_tree',    x: 21, y: 15.5 },
+    // Understory — glowing mushrooms in the deep pockets between clumps
+    { sprite: 'glowing_mushroom',  x: 11, y: 5  },
+    { sprite: 'glowing_mushroom',  x: 16, y: 9  },
+    { sprite: 'glowing_mushroom',  x: 7,  y: 10 },
+    { sprite: 'glowing_mushroom',  x: 20, y: 13 },
+    // Hollow logs as secondary cover in the lanes
+    { sprite: 'hollow_log',        x: 18, y: 10 },
+    { sprite: 'hollow_log',        x: 8,  y: 3  },
+    // Rift corruption as focal beat at the center of the thicket
+    { sprite: 'rift_corruption_node', x: 15, y: 14 },
+    // Grass tufts tight around the clump bases
+    { sprite: 'tall_grass_dark', x: 6,  y: 5 },
+    { sprite: 'tall_grass_dark', x: 12, y: 6 },
+    { sprite: 'tall_grass_dark', x: 17, y: 4 },
+    { sprite: 'tall_grass_dark', x: 22, y: 6 },
+    { sprite: 'tall_grass_dark', x: 3,  y: 10 },
+    { sprite: 'tall_grass_dark', x: 26, y: 9  },
+    { sprite: 'tall_grass_dark', x: 9,  y: 13 },
+    { sprite: 'tall_grass_dark', x: 18, y: 14 },
+    { sprite: 'tall_grass_dark', x: 13, y: 17 },
+    { sprite: 'tall_grass_dark', x: 23, y: 17 },
+  ];
+  return applyOverride('choked_thicket', {
+    ...room,
+    __editorKey: 'choked_thicket',
+  } as RoomTemplate & { __editorKey: string });
+})();
+
+// --- Dark Jungle combat: "Rotwood Hollow" ---
+// Promotes the jungle biome from test-only to the live combat pool. Central
+// focal thicket (2x2) with four satellite vine pillars — ring layout that
+// forces flanking plays. Ferns and glowing mushrooms layer the understory.
+export const ROTWOOD_HOLLOW_ROOM: RoomTemplate = (() => {
+  const room = makeRoom(
+    'combat',
+    'Rotwood Hollow',
+    [{ x: 15, y: 4 }, { x: 6, y: 9 }, { x: 24, y: 9 }, { x: 10, y: 14 }, { x: 20, y: 14 }],
+  );
+  // Central 2x2 thicket — the focal cover
+  room.tiles[9][14]  = 2;
+  room.tiles[9][15]  = 2;
+  room.tiles[10][14] = 2;
+  room.tiles[10][15] = 2;
+  // NW satellite pillar
+  room.tiles[5][6]  = 2;
+  room.tiles[6][6]  = 2;
+  // NE satellite pillar
+  room.tiles[5][23] = 2;
+  room.tiles[6][23] = 2;
+  // SW satellite pillar
+  room.tiles[13][6] = 2;
+  room.tiles[14][6] = 2;
+  // SE satellite pillar
+  room.tiles[13][23] = 2;
+  room.tiles[14][23] = 2;
+
+  room.biome = 'dark_jungle';
+  room.decorations = [
+    // Central focal — corrupted tree towering over the thicket
+    { sprite: 'corrupted_tree',       x: 15, y: 9.5  },
+    { sprite: 'rift_corruption_node', x: 13, y: 11  },
+    { sprite: 'rift_corruption_node', x: 17, y: 11  },
+    { sprite: 'giant_fern',           x: 12, y: 9  },
+    { sprite: 'giant_fern',           x: 18, y: 9  },
+    { sprite: 'glowing_mushroom',     x: 16, y: 12 },
+    // NW satellite — twisted tree flanked by ferns
+    { sprite: 'twisted_dark_tree', x: 6.5, y: 5.5 },
+    { sprite: 'giant_fern',        x: 4,   y: 7   },
+    { sprite: 'giant_fern',        x: 8,   y: 6   },
+    { sprite: 'glowing_mushroom',  x: 3,   y: 5   },
+    // NE satellite — twisted tree + hollow log story
+    { sprite: 'twisted_dark_tree', x: 23.5, y: 5.5 },
+    { sprite: 'hollow_log',        x: 25,   y: 7   },
+    { sprite: 'giant_fern',        x: 21,   y: 6   },
+    { sprite: 'glowing_mushroom',  x: 26,   y: 5   },
+    // SW satellite — fern-heavy ambush pocket
+    { sprite: 'twisted_dark_tree', x: 6.5, y: 13.5 },
+    { sprite: 'giant_fern',        x: 4,   y: 14  },
+    { sprite: 'giant_fern',        x: 8,   y: 15  },
+    { sprite: 'tall_grass_dark',   x: 3,   y: 15  },
+    { sprite: 'tall_grass_dark',   x: 9,   y: 13  },
+    // SE satellite — hollow log + fern
+    { sprite: 'twisted_dark_tree', x: 23.5, y: 13.5 },
+    { sprite: 'hollow_log',        x: 25,   y: 15  },
+    { sprite: 'giant_fern',        x: 21,   y: 15  },
+    { sprite: 'glowing_mushroom',  x: 26,   y: 13  },
+    // Ambient scatter across the open floor
+    { sprite: 'tall_grass_dark',   x: 11, y: 5  },
+    { sprite: 'tall_grass_dark',   x: 19, y: 5  },
+    { sprite: 'tall_grass_dark',   x: 11, y: 16 },
+    { sprite: 'tall_grass_dark',   x: 19, y: 16 },
+    { sprite: 'glowing_mushroom',  x: 14, y: 16 },
+  ];
+  return applyOverride('rotwood_hollow', {
+    ...room,
+    __editorKey: 'rotwood_hollow',
+  } as RoomTemplate & { __editorKey: string });
+})();
+
+// --- Dark Badlands combat: "Sunbleached Arena" ---
+// Promotes the badlands biome from test-only to the live combat pool. Open
+// rocky arena — boulder clusters at the four cardinal midpoints provide cover
+// without blocking lanes, so enemies have natural ambush points but the
+// player can always reposition through the open middle.
+export const SUNBLEACHED_ARENA_ROOM: RoomTemplate = (() => {
+  const room = makeRoom(
+    'combat',
+    'Sunbleached Arena',
+    [{ x: 15, y: 5 }, { x: 7, y: 9 }, { x: 23, y: 9 }, { x: 10, y: 14 }, { x: 20, y: 14 }],
+  );
+  // N boulder cluster
+  room.tiles[4][14] = 2;
+  room.tiles[4][15] = 2;
+  room.tiles[5][14] = 2;
+  // W boulder cluster
+  room.tiles[9][4]  = 2;
+  room.tiles[10][4] = 2;
+  room.tiles[10][5] = 2;
+  // E boulder cluster
+  room.tiles[9][25]  = 2;
+  room.tiles[10][24] = 2;
+  room.tiles[10][25] = 2;
+  // S boulder cluster
+  room.tiles[14][15] = 2;
+  room.tiles[15][14] = 2;
+  room.tiles[15][15] = 2;
+  // Center focal boulder — single tile, lonely anchor
+  room.tiles[9][15]  = 2;
+
+  room.biome = 'dark_badlands';
+  room.decorations = [
+    // N cluster — cracked boulder anchor
+    { sprite: 'badlands_cracked_boulder', x: 15, y: 4.5 },
+    { sprite: 'badlands_small_rock',      x: 13, y: 6  },
+    { sprite: 'badlands_small_rock',      x: 17, y: 5  },
+    // W cluster — rock cluster focal
+    { sprite: 'badlands_rock_cluster',    x: 4.5, y: 10 },
+    { sprite: 'badlands_small_rock',      x: 3,   y: 8  },
+    { sprite: 'badlands_small_rock',      x: 6,   y: 11 },
+    // E cluster — mirror
+    { sprite: 'badlands_rock_cluster',    x: 24.5, y: 10 },
+    { sprite: 'badlands_small_rock',      x: 26,   y: 8  },
+    { sprite: 'badlands_small_rock',      x: 23,   y: 11 },
+    // S cluster — cracked boulder
+    { sprite: 'badlands_cracked_boulder', x: 15, y: 15 },
+    { sprite: 'badlands_small_rock',      x: 13, y: 16 },
+    { sprite: 'badlands_small_rock',      x: 17, y: 14 },
+    // Center — focal boulder with rift accent
+    { sprite: 'badlands_cracked_boulder', x: 15, y: 9.5 },
+    { sprite: 'rift_corruption_node',     x: 14, y: 11  },
+    // Ambient scatter — rubble trails between clusters
+    { sprite: 'badlands_small_rock',      x: 9,  y: 4  },
+    { sprite: 'badlands_small_rock',      x: 21, y: 4  },
+    { sprite: 'badlands_small_rock',      x: 9,  y: 16 },
+    { sprite: 'badlands_small_rock',      x: 21, y: 16 },
+    { sprite: 'badlands_small_rock',      x: 19, y: 10 },
+    { sprite: 'badlands_small_rock',      x: 11, y: 10 },
+    // Stepping stones trailing in from south
+    { sprite: 'stepping_stone',           x: 15, y: 18 },
+    { sprite: 'stepping_stone',           x: 14, y: 17 },
+  ];
+  return applyOverride('sunbleached_arena', {
+    ...room,
+    __editorKey: 'sunbleached_arena',
+  } as RoomTemplate & { __editorKey: string });
+})();
+
+// --- Dark Plains variant: "Windbreak Ridge" ---
+// Alt plains combat layout. Two staggered ridge segments cut a loose diagonal
+// NW→SE across the room, creating a shielded lee side to the south where
+// enemies can mass. Contrasts with Windswept Plains' scattered cover pattern.
+export const WINDBREAK_RIDGE_ROOM: RoomTemplate = (() => {
+  const room = makeRoom(
+    'combat',
+    'Windbreak Ridge',
+    [{ x: 8, y: 4 }, { x: 22, y: 4 }, { x: 15, y: 9 }, { x: 8, y: 15 }, { x: 22, y: 15 }],
+  );
+  // Upper ridge — NW diagonal segment
+  room.tiles[5][4]  = 2;
+  room.tiles[5][5]  = 2;
+  room.tiles[6][5]  = 2;
+  room.tiles[6][6]  = 2;
+  room.tiles[7][7]  = 2;
+  room.tiles[7][8]  = 2;
+  // Lower ridge — SE diagonal segment
+  room.tiles[12][21] = 2;
+  room.tiles[12][22] = 2;
+  room.tiles[13][22] = 2;
+  room.tiles[13][23] = 2;
+  room.tiles[14][24] = 2;
+  room.tiles[14][25] = 2;
+
+  room.biome = 'dark_plains_bluff';
+  room.decorations = [
+    // Upper ridge — grass piled in the wind-shadow (south side of the bluff)
+    { sprite: 'tall_grass_wild', x: 4,  y: 7  },
+    { sprite: 'tall_grass_wild', x: 6,  y: 8  },
+    { sprite: 'tall_grass_wild', x: 8,  y: 9  },
+    { sprite: 'tall_grass_dark', x: 3,  y: 8  },
+    { sprite: 'tall_grass_wild', x: 9,  y: 10 },
+    { sprite: 'tall_grass_wild', x: 5,  y: 9  },
+    // Lower ridge — mirror pattern on the SE side
+    { sprite: 'tall_grass_wild', x: 20, y: 14 },
+    { sprite: 'tall_grass_wild', x: 22, y: 15 },
+    { sprite: 'tall_grass_wild', x: 24, y: 16 },
+    { sprite: 'tall_grass_dark', x: 26, y: 15 },
+    { sprite: 'tall_grass_wild', x: 23, y: 17 },
+    { sprite: 'tall_grass_wild', x: 19, y: 15 },
+    // Open corridor — sparse scatter keeping the diagonal visible
+    { sprite: 'tall_grass_wild', x: 14, y: 6  },
+    { sprite: 'tall_grass_wild', x: 17, y: 5  },
+    { sprite: 'tall_grass_wild', x: 12, y: 12 },
+    { sprite: 'tall_grass_wild', x: 18, y: 13 },
+    // NE pocket — hollow log + mushroom story beat behind the upper ridge
+    { sprite: 'hollow_log',      x: 22, y: 6  },
+    { sprite: 'glowing_mushroom', x: 24, y: 7  },
+    { sprite: 'tall_grass_dark', x: 21, y: 8  },
+    { sprite: 'tall_grass_wild', x: 25, y: 5  },
+    // SW pocket — rift corruption node anchors the low ground
+    { sprite: 'rift_corruption_node', x: 6,  y: 15 },
+    { sprite: 'glowing_mushroom',     x: 8,  y: 13 },
+    { sprite: 'tall_grass_wild',      x: 4,  y: 14 },
+    { sprite: 'tall_grass_wild',      x: 7,  y: 16 },
+    { sprite: 'tall_grass_dark',      x: 5,  y: 17 },
+    // Stepping stones leading in from the south
+    { sprite: 'stepping_stone',       x: 15, y: 17 },
+    { sprite: 'stepping_stone',       x: 14, y: 15 },
+  ];
+  return applyOverride('windbreak_ridge', {
+    ...room,
+    __editorKey: 'windbreak_ridge',
+  } as RoomTemplate & { __editorKey: string });
+})();
+
+// --- Dark Grass Cliff combat: "Crystal Flats" ---
+// Combat variant of the start biome — open grass arena with scattered rift
+// crystal pillars as asymmetric cover. Three small single-tile wall pillars
+// under crystal formations give real collision cover without blocking the
+// sweeping sightlines that define this biome.
+export const CRYSTAL_FLATS_ROOM: RoomTemplate = (() => {
+  const room = makeRoom(
+    'combat',
+    'Crystal Flats',
+    [{ x: 10, y: 5 }, { x: 20, y: 5 }, { x: 15, y: 10 }, { x: 6, y: 14 }, { x: 24, y: 14 }],
+  );
+  // Three crystal pillars — asymmetric placement, single-tile collision each
+  room.tiles[6][9]   = 2;
+  room.tiles[8][20]  = 2;
+  room.tiles[13][12] = 2;
+  room.tiles[12][22] = 2;
+
+  room.biome = 'dark_grass_cliff';
+  room.decorations = [
+    // Pillar 1 (NW) — cluster formation with shards
+    { sprite: 'rift_crystal_formation', x: 9,  y: 6  },
+    { sprite: 'rift_crystal_shard',     x: 7,  y: 7  },
+    { sprite: 'rift_crystal_shard',     x: 11, y: 5  },
+    { sprite: 'tall_grass_dark',        x: 8,  y: 8  },
+    // Pillar 2 (NE) — outcrop with scatter
+    { sprite: 'rift_crystal_outcrop',   x: 20, y: 8  },
+    { sprite: 'rift_crystal_shard',     x: 22, y: 7  },
+    { sprite: 'rift_crystal_shard',     x: 18, y: 9  },
+    { sprite: 'tall_grass_dark',        x: 19, y: 6  },
+    // Pillar 3 (center-SW) — cluster + rift corruption story beat
+    { sprite: 'rift_crystal_cluster',   x: 12, y: 13 },
+    { sprite: 'rift_corruption_node',   x: 14, y: 14 },
+    { sprite: 'rift_crystal_shard',     x: 10, y: 14 },
+    { sprite: 'tall_grass_dark',        x: 13, y: 12 },
+    // Pillar 4 (SE) — outcrop twin
+    { sprite: 'rift_crystal_outcrop',   x: 22, y: 12 },
+    { sprite: 'rift_crystal_shard',     x: 24, y: 13 },
+    { sprite: 'rift_crystal_shard',     x: 20, y: 13 },
+    // Grass scatter across the open flats
+    { sprite: 'tall_grass_dark', x: 4,  y: 4  },
+    { sprite: 'tall_grass_dark', x: 15, y: 3  },
+    { sprite: 'tall_grass_dark', x: 26, y: 4  },
+    { sprite: 'tall_grass_dark', x: 5,  y: 10 },
+    { sprite: 'tall_grass_dark', x: 17, y: 11 },
+    { sprite: 'tall_grass_dark', x: 25, y: 10 },
+    { sprite: 'tall_grass_dark', x: 4,  y: 16 },
+    { sprite: 'tall_grass_dark', x: 16, y: 17 },
+    { sprite: 'tall_grass_dark', x: 26, y: 17 },
+    { sprite: 'glowing_mushroom', x: 8, y: 12 },
+    { sprite: 'glowing_mushroom', x: 25, y: 6 },
+    // Stepping stone trail from south
+    { sprite: 'stepping_stone', x: 15, y: 16 },
+    { sprite: 'stepping_stone', x: 14, y: 18 },
+  ];
+  return applyOverride('crystal_flats', {
+    ...room,
+    __editorKey: 'crystal_flats',
+  } as RoomTemplate & { __editorKey: string });
+})();
+
 // --- Hub room: narrow vertical hall ---
 //
 // Layout (22 wide, 26 tall). Branches hang off the east and west walls
@@ -1188,11 +1524,28 @@ export const TEST_ROOMS: Record<string, RoomTemplate> = {
   dark_jungle: JUNGLE_TEST_ROOM,
   dark_void: RIFT_SHARD_ROOM,
   hub: HUB_ROOM,
+  choked_thicket: CHOKED_THICKET_ROOM,
+  rotwood_hollow: ROTWOOD_HOLLOW_ROOM,
+  sunbleached_arena: SUNBLEACHED_ARENA_ROOM,
+  windbreak_ridge: WINDBREAK_RIDGE_ROOM,
+  crystal_flats: CRYSTAL_FLATS_ROOM,
 };
 
 // All templates by type for dungeon generation
 export const ROOM_TEMPLATES: Record<RoomType, RoomTemplate[]> = {
-  combat: [COMBAT_ROOM_1, COMBAT_ROOM_2, WATER_COMBAT_ROOM, DARK_FOREST_ROOM, PLAINS_ROOM, LAVA_ROOM],
+  combat: [
+    COMBAT_ROOM_1,
+    COMBAT_ROOM_2,
+    WATER_COMBAT_ROOM,
+    DARK_FOREST_ROOM,
+    PLAINS_ROOM,
+    LAVA_ROOM,
+    CHOKED_THICKET_ROOM,
+    ROTWOOD_HOLLOW_ROOM,
+    SUNBLEACHED_ARENA_ROOM,
+    WINDBREAK_RIDGE_ROOM,
+    CRYSTAL_FLATS_ROOM,
+  ],
   elite: [ELITE_ROOM],
   boss: [BOSS_ROOM],
   recruit: [RECRUIT_ROOM],

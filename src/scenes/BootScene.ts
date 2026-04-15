@@ -230,6 +230,16 @@ export class BootScene extends Phaser.Scene {
       }
     }
 
+    // Tidecrawler spin attack — frames are the 8 idle rotations cycled from each starting dir
+    for (const dir of tidecrawlerWalkDirs) {
+      for (let f = 0; f < 8; f++) {
+        this.load.image(
+          `tidecrawler_atk_spin_${dir}_${f}`,
+          `assets/sprites/tidecrawler/animations/atk_spin/${dir}/frame_00${f}.png`,
+        );
+      }
+    }
+
     // Thistlebound hop animation frames (4 dirs × 8 frames, skip frame_000 which is idle)
     const thistleboundWalkDirs = ['south', 'north', 'east', 'west'];
     for (const dir of thistleboundWalkDirs) {
@@ -308,6 +318,7 @@ export class BootScene extends Phaser.Scene {
     registerWalkAnims(this, 'solarglare', 8, 14);
     registerAttackAnims(this, 'solarglare', 'attack', 8);
     registerWalkAnims(this, 'tidecrawler', 8, 12);
+    registerAttackAnims(this, 'tidecrawler', 'spin', 8);
     registerWalkAnims(this, 'thistlebound', 8, 14);
     registerWalkAnims(this, 'hollowcrow', 8, 14);
 

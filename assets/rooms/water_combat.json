@@ -863,6 +863,36 @@
       "sprite": "stepping_stone",
       "x": 12,
       "y": 5
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 25,
+      "y": 16
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 25,
+      "y": 15
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 25,
+      "y": 14
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 26,
+      "y": 15
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 26,
+      "y": 14
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 26,
+      "y": 16
     }
   ]
 }

@@ -143,6 +143,70 @@
       "asset_type": "map_object",
       "local_path": "assets/objects/rift-crystal-outcrop",
       "imported_at": "2026-04-14T00:31:36.107064+00:00"
+    },
+    {
+      "registry_key": "wavecaller",
+      "library_asset_id": "4901321e-37b0-4d6a-b1b7-0acb0e6f5953",
+      "asset_type": "character",
+      "local_path": "assets/characters/wavecaller",
+      "imported_at": "2026-04-15T03:02:38.659484+00:00",
+      "notes": "Water caster riftling \u2014 capybara with lily pads"
+    },
+    {
+      "registry_key": "nettlehide",
+      "library_asset_id": "2aa0a840-18c3-4337-bf65-7e24e1f734a5",
+      "asset_type": "character",
+      "local_path": "assets/characters/nettlehide",
+      "imported_at": "2026-04-15T03:02:41.559987+00:00",
+      "notes": "Nature skirmisher riftling \u2014 thorn hedgehog"
+    },
+    {
+      "registry_key": "veilseer",
+      "library_asset_id": "e4713245-2ea0-4d4d-be3f-ce49389ea1ff",
+      "asset_type": "character",
+      "local_path": "assets/characters/veilseer",
+      "imported_at": "2026-04-15T03:02:44.021722+00:00",
+      "notes": "Dark support riftling \u2014 four-eyed owl watcher"
+    },
+    {
+      "registry_key": "cindertail",
+      "library_asset_id": "9a46027f-31fe-4e95-b94a-c9991ba01627",
+      "asset_type": "character",
+      "local_path": "assets/characters/cindertail",
+      "imported_at": "2026-04-15T03:02:46.316086+00:00",
+      "notes": "Fire caster riftling"
+    },
+    {
+      "registry_key": "dawnstrike",
+      "library_asset_id": "2019904e-e05c-497f-bd68-e892d21660d9",
+      "asset_type": "character",
+      "local_path": "assets/characters/dawnstrike",
+      "imported_at": "2026-04-15T03:03:04.410827+00:00",
+      "notes": "Light skirmisher riftling"
+    },
+    {
+      "registry_key": "bogweft",
+      "library_asset_id": "42096440-b15f-46cb-8d49-59aac3641063",
+      "asset_type": "character",
+      "local_path": "assets/characters/bogweft",
+      "imported_at": "2026-04-15T03:03:06.740154+00:00",
+      "notes": "Earth hexer riftling"
+    },
+    {
+      "registry_key": "dewspine",
+      "library_asset_id": "8a63ce9a-a040-41d3-88f0-fcb484a1262f",
+      "asset_type": "character",
+      "local_path": "assets/characters/dewspine",
+      "imported_at": "2026-04-15T03:03:09.281037+00:00",
+      "notes": "Water striker riftling"
+    },
+    {
+      "registry_key": "crestshrike",
+      "library_asset_id": "88c9122f-228a-417c-8f60-2b1b03cb011c",
+      "asset_type": "character",
+      "local_path": "assets/characters/crestshrike",
+      "imported_at": "2026-04-15T03:03:11.430522+00:00",
+      "notes": "Earth hunter riftling"
     }
   ]
 }

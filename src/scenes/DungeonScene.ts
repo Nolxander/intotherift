@@ -12,11 +12,12 @@ import { RoomTemplate, Biome, TEST_ROOMS } from '../data/room_templates';
 import { DECORATION_CATALOG } from '../data/decorations';
 import { CombatManager, CompanionEntry, DefeatedRiftling } from '../combat/CombatManager';
 import { computeEliteFormation } from '../combat/eliteFormation';
-import { Party, PartyRiftling, createStartingParty, createRiftling, addToParty, awardXP, getActiveSynergies, BENCH_XP_RATIO, LevelUpResult, RIFTLING_TEMPLATES, AVAILABLE_RIFTLINGS, TYPE_COLORS, speciesScale } from '../data/party';
+import { Party, PartyRiftling, createStartingParty, createRiftling, addToParty, awardXP, getActiveSynergies, BENCH_XP_RATIO, LevelUpResult, RIFTLING_TEMPLATES, AVAILABLE_RIFTLINGS, TYPE_COLORS, speciesScale, generateStatCards, applyStatCard, getUpgradeMoveForLevel, applyMoveUpgrade } from '../data/party';
 import { getXPMultiplier, getBossTimerBonus, getEliteXPMultiplier, getLowestLevelXPBonus, TRINKET_CATALOG, TrinketDef, addTrinket, ALL_TRINKET_IDS } from '../data/trinkets';
 import { SimpleNav, NavPoint, NAV_ARRIVAL_RADIUS, STUCK_WINDOW_MS, STUCK_THRESHOLD_PX } from '../data/nav';
 import { playWalkOrStatic, stopWalkAnim, directionFromVelocity } from '../data/anims';
 import { RecruitPrompt } from '../ui/RecruitPrompt';
+import { LevelUpCardPrompt } from '../ui/LevelUpCardPrompt';
 import { PartyScreen } from '../ui/PartyScreen';
 import { CombatHUD } from '../ui/CombatHUD';
 import { SynergyHUD } from '../ui/SynergyHUD';
@@ -86,6 +87,8 @@ interface DecorationEntry {
   y: number;
   img: Phaser.GameObjects.Image;
   body: Phaser.Physics.Arcade.Sprite | null;
+  baseDepth: number;
+  immersive: boolean;
 }
 
 interface CompanionState {
@@ -194,6 +197,7 @@ export class DungeonScene extends Phaser.Scene {
   private activeCompanionIndex = 0;
   private selectedIndex = 0; // persistent selection for party HUD + move display
   private recruitPrompt!: RecruitPrompt;
+  private levelUpPrompt!: LevelUpCardPrompt;
   private pendingRecruit = false;
   private partyHud!: Phaser.GameObjects.Container;
   private partyScreen!: PartyScreen;
@@ -228,6 +232,7 @@ export class DungeonScene extends Phaser.Scene {
       selectedIndex: this.selectedIndex,
     }));
     this.recruitPrompt = new RecruitPrompt(this);
+    this.levelUpPrompt = new LevelUpCardPrompt(this);
     this.partyScreen = new PartyScreen(this, this.party, () => {
       this.syncCompanions();
       this.drawPartyHud();
@@ -289,6 +294,7 @@ export class DungeonScene extends Phaser.Scene {
       getParty: () => this.party,
       getRoom: () => this.currentRoom,
       isRecruitActive: () => this.recruitPrompt?.isActive ?? false,
+      isLevelUpActive: () => this.levelUpPrompt?.isActive ?? false,
       isCombatActive: () => this.combatManager?.isActive ?? false,
       getDungeon: () => this.dungeon,
       isPartyScreenActive: () => this.partyScreen?.isActive ?? false,
@@ -312,6 +318,23 @@ export class DungeonScene extends Phaser.Scene {
         const result = awardXP(r, amount);
         this.drawPartyHud();
         return result;
+      },
+      /**
+       * Force the post-combat level-up card flow for an active riftling —
+       * for QA testing only. Pushes the riftling to the given level and
+       * opens the same card prompt the combat-clear path uses.
+       */
+      triggerLevelUp: (index: number, targetLevel: number) => {
+        const r = this.party.active[index];
+        if (!r) return;
+        const results: LevelUpResult[] = [];
+        while (r.level < targetLevel) {
+          r.level++;
+          results.push({ riftling: r, newLevel: r.level });
+        }
+        this.showLevelUps(results, () => {
+          this.drawPartyHud();
+        });
       },
       isRiftShardSelecting: () => this.riftShardSelecting,
       /** Trinket inventory (equipped + bag). */
@@ -351,6 +374,7 @@ export class DungeonScene extends Phaser.Scene {
       this.trainer,
       this.timerText, this.roomLabel, this.minimapGfx,
       this.partyHud, this.recruitPrompt?.getContainer(),
+      this.levelUpPrompt?.getContainer(),
       this.partyScreen?.getContainer(),
       this.combatHud?.getContainer(),
       this.synergyHud?.getContainer(),
@@ -737,9 +761,15 @@ export class DungeonScene extends Phaser.Scene {
     const scale = def.displaySize / longer;
     img.setScale(scale);
     img.setOrigin(0.5, 1.0);
-    img.y = worldY + (img.height * scale) / 2;
-    // Depth based on bottom-Y so decorations sort correctly with characters
-    img.setDepth(10 + img.y / 10);
+    const baseY = worldY + (img.height * scale) / 2;
+    img.y = baseY + (def.yOffset ?? 0);
+    // Depth sorts by the unshifted base (tile-bottom) so yOffset only changes
+    // where the sprite draws, not its sort order. Immersive props like tall
+    // grass still draw in front of a character whose sprite center is above
+    // the tile, but a character who has walked a full tile past the grass
+    // out-sorts it correctly.
+    const baseDepth = 10 + baseY / 10;
+    img.setDepth(baseDepth);
 
     let body: Phaser.Physics.Arcade.Sprite | null = null;
     if (def.collides) {
@@ -754,8 +784,48 @@ export class DungeonScene extends Phaser.Scene {
       body.refreshBody();
     }
 
-    this.decorationEntries.push({ sprite, x: tileX, y: tileY, img, body });
+    const immersive = (def.yOffset ?? 0) > 0;
+    this.decorationEntries.push({ sprite, x: tileX, y: tileY, img, body, baseDepth, immersive });
     return true;
+  }
+
+  /**
+   * Pokémon-style tall-grass rendering. Immersive decorations (those with a
+   * positive yOffset, e.g. tall grass) normally Y-sort by their own bottom
+   * edge, which makes a unit walking across a multi-tile patch visibly pop
+   * in front of individual grass sprites when their depth crosses each
+   * sprite's baseline. To keep the unit visually inside the patch, any
+   * immersive decoration that a unit is currently overlapping is forced
+   * above that unit's depth for this frame; otherwise it restores its
+   * authored base depth.
+   */
+  private updateImmersiveDecorationDepths(): void {
+    if (this.decorationEntries.length === 0) return;
+    const units: { x: number; y: number; depth: number }[] = [];
+    if (this.trainer?.active) {
+      units.push({ x: this.trainer.x, y: this.trainer.y, depth: this.trainer.depth });
+    }
+    for (const c of this.companions) {
+      if (c.sprite.active) units.push({ x: c.sprite.x, y: c.sprite.y, depth: c.sprite.depth });
+    }
+    const RX = TILE * 0.75;
+    const RY = TILE * 0.9;
+    for (const entry of this.decorationEntries) {
+      if (!entry.immersive) continue;
+      const cx = entry.x * TILE + TILE / 2;
+      const cy = entry.y * TILE + TILE / 2;
+      let maxUnitDepth = -Infinity;
+      for (const u of units) {
+        if (Math.abs(u.x - cx) < RX && Math.abs(u.y - cy) < RY) {
+          if (u.depth > maxUnitDepth) maxUnitDepth = u.depth;
+        }
+      }
+      if (maxUnitDepth > -Infinity) {
+        entry.img.setDepth(Math.max(entry.baseDepth, maxUnitDepth + 0.5));
+      } else if (entry.img.depth !== entry.baseDepth) {
+        entry.img.setDepth(entry.baseDepth);
+      }
+    }
   }
 
   // ─── In-browser builder live-edit hooks ────────────────────────────
@@ -1113,14 +1183,19 @@ export class DungeonScene extends Phaser.Scene {
         this.cycleSelectedIndex(1);
       }
 
-      // R — Rally (all riftlings sprint to trainer)
-      if ((e.key === 'r' || e.key === 'R') && this.combatManager?.isActive) {
-        this.combatManager.rally(this.time.now);
-      }
-
-      // F — Unleash (all signature moves fire)
-      if ((e.key === 'f' || e.key === 'F') && this.combatManager?.isActive) {
-        this.combatManager.unleash(this.time.now);
+      // 1/2 — set stance on selected ally (shift = whole squad).
+      // Hold/Group are still in CombatManager but unbound: drag-and-drop
+      // setup made them redundant, so only Push/Withdraw are player-facing.
+      if (this.combatManager?.isActive) {
+        const stanceKey: Record<string, 'push' | 'hold' | 'withdraw' | 'group'> = {
+          '1': 'push', '2': 'withdraw',
+        };
+        const stance = stanceKey[e.key];
+        if (stance) {
+          if (e.shiftKey) this.combatManager.setAllStances(stance);
+          else this.combatManager.setStanceForIndex(this.selectedIndex, stance);
+          this.drawPartyHud();
+        }
       }
     });
 
@@ -1131,6 +1206,11 @@ export class DungeonScene extends Phaser.Scene {
       const worldX = pointer.worldX;
       const worldY = pointer.worldY;
       const inCombat = this.combatManager?.isActive ?? false;
+
+      // Setup phase: left-click on an ally starts a drag-to-reposition.
+      if (inCombat && !pointer.rightButtonDown() && this.combatManager.isSetupPhase) {
+        if (this.combatManager.tryStartDrag(worldX, worldY)) return;
+      }
 
       // Right-click during combat: focus target
       if (pointer.rightButtonDown() && inCombat) {
@@ -1162,9 +1242,17 @@ export class DungeonScene extends Phaser.Scene {
         return;
       }
 
-      // Left-click on ground during combat: reposition selected riftling
-      if (inCombat) {
-        this.combatManager.repositionSelected(worldX, worldY, this.time.now);
+    });
+
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (this.combatManager?.isDraggingSetup) {
+        this.combatManager.updateDrag(pointer.worldX, pointer.worldY);
+      }
+    });
+
+    this.input.on('pointerup', () => {
+      if (this.combatManager?.isDraggingSetup) {
+        this.combatManager.endDrag();
       }
     });
   }
@@ -1294,6 +1382,9 @@ export class DungeonScene extends Phaser.Scene {
         eliteTrainerPos,
         eliteFormationPixels,
         wildSpeciesPool,
+        this.party.savedFormation,
+        (offsets) => { this.party.savedFormation = offsets; },
+        () => this.onPartyWiped(),
       );
       // CombatHUD is always visible — no show/hide needed
     }
@@ -1410,27 +1501,27 @@ export class DungeonScene extends Phaser.Scene {
     container.add(overlay);
 
     // Title
-    container.add(this.add.text(240, 28, 'Choose Your Starter', {
-      fontFamily: 'monospace', fontSize: '14px', color: '#ffdd44',
-      stroke: '#000000', strokeThickness: 3,
+    container.add(this.add.text(240, 26, 'Choose Your Starter', {
+      fontFamily: 'monospace', fontSize: '16px', color: '#ffdd44',
+      stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0.5));
 
     container.add(this.add.text(240, 44, 'Select a riftling to begin your run', {
-      fontFamily: 'monospace', fontSize: '8px', color: '#8866aa',
-      stroke: '#000000', strokeThickness: 2,
+      fontFamily: 'monospace', fontSize: '10px', color: '#ccbbee',
+      stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5));
 
     // Grid layout — 4 columns
     const cols = 4;
-    const cardW = 100;
-    const cardH = 72;
-    const gapX = 10;
-    const gapY = 10;
+    const cardW = 108;
+    const cardH = 80;
+    const gapX = 8;
+    const gapY = 8;
     const rows = Math.ceil(keys.length / cols);
     const totalW = cols * cardW + (cols - 1) * gapX;
     const totalH = rows * cardH + (rows - 1) * gapY;
     const gridStartX = 240 - totalW / 2 + cardW / 2;
-    const gridStartY = 160 - totalH / 2 + cardH / 2 + 10;
+    const gridStartY = 160 - totalH / 2 + cardH / 2 + 18;
 
     keys.forEach((key, i) => {
       const tmpl = RIFTLING_TEMPLATES[key];
@@ -1449,26 +1540,27 @@ export class DungeonScene extends Phaser.Scene {
       container.add(cardBg);
 
       // Sprite preview
-      const sprite = this.add.image(cx, cy - 14, `${tmpl.texturePrefix}_south`).setScale(0.5 * speciesScale(tmpl.texturePrefix));
+      const sprite = this.add.image(cx, cy - 14, `${tmpl.texturePrefix}_south`).setScale(0.9 * speciesScale(tmpl.texturePrefix));
       container.add(sprite);
 
       // Name
-      container.add(this.add.text(cx, cy + 12, tmpl.name, {
-        fontFamily: 'monospace', fontSize: '8px', color: '#ffffff',
-        stroke: '#000000', strokeThickness: 2,
+      container.add(this.add.text(cx, cy + 14, tmpl.name, {
+        fontFamily: 'monospace', fontSize: '11px', color: '#ffffff',
+        stroke: '#000000', strokeThickness: 3,
       }).setOrigin(0.5));
 
       // Type + Role
       const typeHex = '#' + typeColor.toString(16).padStart(6, '0');
-      container.add(this.add.text(cx, cy + 22, `${tmpl.elementType} ${tmpl.role}`, {
-        fontFamily: 'monospace', fontSize: '7px', color: typeHex,
-        stroke: '#000000', strokeThickness: 1,
+      const label = `${tmpl.elementType.toUpperCase()} · ${tmpl.role.toUpperCase()}`;
+      container.add(this.add.text(cx, cy + 29, label, {
+        fontFamily: 'monospace', fontSize: '9px', color: typeHex,
+        stroke: '#000000', strokeThickness: 3,
       }).setOrigin(0.5));
 
       // Key hint
-      container.add(this.add.text(cx + cardW / 2 - 6, cy - cardH / 2 + 4, `${i + 1}`, {
-        fontFamily: 'monospace', fontSize: '7px', color: '#ffdd44',
-        stroke: '#000000', strokeThickness: 2,
+      container.add(this.add.text(cx + cardW / 2 - 8, cy - cardH / 2 + 6, `${i + 1}`, {
+        fontFamily: 'monospace', fontSize: '10px', color: '#ffdd44',
+        stroke: '#000000', strokeThickness: 3,
       }).setOrigin(0.5));
 
       // Hit area
@@ -1925,6 +2017,45 @@ export class DungeonScene extends Phaser.Scene {
     return Math.max(1, Math.floor(avg));
   }
 
+  private onPartyWiped(): void {
+    this.stopAllMovement();
+    if (this.timerEvent) this.timerEvent.paused = true;
+
+    const overlay = this.add
+      .rectangle(240, 160, 480, 320, 0x000000, 0.7)
+      .setScrollFactor(0)
+      .setDepth(700);
+    const title = this.add
+      .text(240, 140, 'Game Over', {
+        fontFamily: 'monospace',
+        fontSize: '24px',
+        color: '#ff4444',
+        stroke: '#000000',
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(701);
+    const sub = this.add
+      .text(240, 172, 'Your riftlings have fallen...', {
+        fontFamily: 'monospace',
+        fontSize: '11px',
+        color: '#ffaaaa',
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(701);
+
+    this.time.delayedCall(2200, () => {
+      overlay.destroy();
+      title.destroy();
+      sub.destroy();
+      this.scene.restart();
+    });
+  }
+
   private onRoomCleared(defeated: DefeatedRiftling[]): void {
     this.currentRoom.cleared = true;
     this.pendingRecruit = true;
@@ -2077,7 +2208,12 @@ export class DungeonScene extends Phaser.Scene {
     return levelUps;
   }
 
-  /** Show level-up banners one at a time, then call onDone. */
+  /**
+   * Walk the queued level-ups one at a time. For each:
+   *   1. Show the stat-card picker (3 cards from the weighted pool).
+   *   2. If the new level is 3/6/9, show the move-upgrade picker for that riftling.
+   *   3. Continue to the next queued level-up, then call onDone.
+   */
   private showLevelUps(levelUps: LevelUpResult[], onDone: () => void): void {
     if (levelUps.length === 0) {
       onDone();
@@ -2087,37 +2223,27 @@ export class DungeonScene extends Phaser.Scene {
     const result = levelUps.shift()!;
     const r = result.riftling;
 
-    // Build stat gains string
-    const gains = result.gains.map((g) => `${g.stat} +${g.amount}`);
-
-    const banner = this.add
-      .text(240, 120, `${r.name} reached Lv.${r.level}!`, {
-        fontFamily: 'monospace',
-        fontSize: '13px',
-        color: '#ffdd44',
-        stroke: '#000000',
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(310);
-
-    const statsText = this.add
-      .text(240, 138, gains.join('  '), {
-        fontFamily: 'monospace',
-        fontSize: '9px',
-        color: '#88ddff',
-        stroke: '#000000',
-        strokeThickness: 2,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(310);
-
-    this.time.delayedCall(1200, () => {
-      banner.destroy();
-      statsText.destroy();
+    const afterChoices = () => {
+      this.drawPartyHud();
       this.showLevelUps(levelUps, onDone);
+    };
+
+    const offerMoveUpgradeIfApplicable = () => {
+      const newMove = getUpgradeMoveForLevel(r, result.newLevel);
+      if (!newMove) {
+        afterChoices();
+        return;
+      }
+      this.levelUpPrompt.showMoveUpgrade(r, newMove, (replaceIdx) => {
+        applyMoveUpgrade(r, newMove, replaceIdx);
+        afterChoices();
+      });
+    };
+
+    const cards = generateStatCards(r);
+    this.levelUpPrompt.showStatCards(r, cards, (card) => {
+      if (card) applyStatCard(r, card);
+      offerMoveUpgradeIfApplicable();
     });
   }
 
@@ -2386,8 +2512,8 @@ export class DungeonScene extends Phaser.Scene {
     };
 
     const startX = 4;
-    const slotW = 90;
-    const slotH = 30;
+    const slotW = 108;
+    const slotH = 34;
     const gap = 2;
     const count = this.party.active.length;
 
@@ -2423,17 +2549,31 @@ export class DungeonScene extends Phaser.Scene {
       }
 
       // Name + level
-      const nameText = this.add.text(startX + 28, y + 2, r.name, {
-        fontFamily: 'monospace', fontSize: '7px', color: isSelected ? '#ffffff' : '#bbbbbb',
-        stroke: '#000000', strokeThickness: 1,
+      const nameText = this.add.text(startX + 28, y + 1, r.name, {
+        fontFamily: 'monospace', fontSize: '9px', color: isSelected ? '#ffffff' : '#dddddd',
+        stroke: '#000000', strokeThickness: 2,
       });
       this.partyHud.add(nameText);
 
-      const lvlText = this.add.text(startX + slotW - 4, y + 2, `Lv${r.level}`, {
-        fontFamily: 'monospace', fontSize: '6px', color: '#ffdd44',
-        stroke: '#000000', strokeThickness: 1,
+      const lvlText = this.add.text(startX + slotW - 4, y + 1, `Lv${r.level}`, {
+        fontFamily: 'monospace', fontSize: '8px', color: '#ffdd44',
+        stroke: '#000000', strokeThickness: 2,
       }).setOrigin(1, 0);
       this.partyHud.add(lvlText);
+
+      // Stance glyph (left of level number on the top row)
+      const stanceGlyph: Record<string, { glyph: string; color: string }> = {
+        push:     { glyph: '\u25B2', color: '#ff7755' }, // ▲
+        hold:     { glyph: '\u25A0', color: '#bbbbbb' }, // ■
+        withdraw: { glyph: '\u25BC', color: '#66aaff' }, // ▼
+        group:    { glyph: '\u25CF', color: '#aaff88' }, // ●
+      };
+      const sg = stanceGlyph[r.stance] ?? stanceGlyph.push;
+      const stanceText = this.add.text(startX + slotW - 24, y + 1, sg.glyph, {
+        fontFamily: 'monospace', fontSize: '9px', color: sg.color,
+        stroke: '#000000', strokeThickness: 2,
+      }).setOrigin(1, 0);
+      this.partyHud.add(stanceText);
 
       // Role label + HP numbers (same row, below name)
       const roleColors: Record<string, string> = {
@@ -2444,15 +2584,15 @@ export class DungeonScene extends Phaser.Scene {
       const hpColor = hpRatio > 0.5 ? '#44cc44' : hpRatio > 0.25 ? '#ccaa22' : '#cc3333';
 
       const roleText = this.add.text(startX + 28, y + 12, r.role.toUpperCase(), {
-        fontFamily: 'monospace', fontSize: '5px', color: roleColors[r.role] ?? '#777777',
-        stroke: '#000000', strokeThickness: 1,
+        fontFamily: 'monospace', fontSize: '7px', color: roleColors[r.role] ?? '#aaaaaa',
+        stroke: '#000000', strokeThickness: 2,
       });
       this.partyHud.add(roleText);
 
       // HP numbers right-aligned on the role line (above the bar, not on it)
       const hpLabel = this.add.text(startX + slotW - 4, y + 12, `${r.hp}/${r.maxHp}`, {
-        fontFamily: 'monospace', fontSize: '5px', color: hpColor,
-        stroke: '#000000', strokeThickness: 1,
+        fontFamily: 'monospace', fontSize: '7px', color: hpColor,
+        stroke: '#000000', strokeThickness: 2,
       }).setOrigin(1, 0);
       this.partyHud.add(hpLabel);
 
@@ -2569,6 +2709,7 @@ export class DungeonScene extends Phaser.Scene {
       this.recruitPrompt.update();
       return;
     }
+    if (this.levelUpPrompt?.isActive) return;
 
     // Freeze trainer movement during pre-combat setup
     if (this.combatManager.isActive && this.combatManager.isSetupPhase) {
@@ -2595,6 +2736,7 @@ export class DungeonScene extends Phaser.Scene {
     for (const c of this.companions) {
       if (c.sprite.active) c.sprite.setDepth(10 + c.sprite.y / 10);
     }
+    this.updateImmersiveDecorationDepths();
 
     // Move HUD updates every frame (shows cooldowns in combat, static moves otherwise)
     this.combatHud.update(time);

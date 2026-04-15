@@ -606,6 +606,78 @@ Walking into any door on a terminal room now redirects to the hub directly, so t
 
 ---
 
+## Session 10 — April 14, 2026
+
+### What was built
+
+**Level-up reworked around player choice**
+
+Leveling used to be fully automatic — every new level rolled random stat gains weighted by a riftling's temperament, and move power bumped silently every 3 levels. That removed all decision-making from the player. This session replaces the automatic path with a card-pick flow.
+
+- **Stat card picker**: on every level-up, `generateStatCards(riftling)` draws 3 distinct cards from a pool of 7 possible stat bumps (HP +10, ATK +2, DEF +2, SPD +4, A.SPD −30 ms, CRIT +4%, EVA +4%). Weights are 10 by default, 25 for the riftling's temperament-boosted stat, and the reduced stat is excluded from the pool entirely. Capped stats (CRIT 50, EVA 40, A.SPD 400 ms floor) are also filtered out. Temperament now *biases* the pool instead of *overriding* choice.
+- **HP is just another card.** There are no automatic stat gains on player level-up anymore — if the player never picks HP, the riftling never gains HP. This makes spec decisions real.
+- **Move upgrades at L3 / L6 / L9**: each species gets a `upgradeMoves: [Move, Move, Move]` field. The L3 upgrade is the species' old third move (previously sitting unequipped in `moves[2]`), so only 24 new moves had to be authored (2 per species × 12). Full list in `src/data/party.ts` — each is themed to the species' role (e.g. Emberhound gets Cinder Trail / Inferno Pounce; Solarglare gets Sunspear / Zenith Nova).
+- **3 move slots, 2 active**: `moves[]` is a dynamic buffer sized up to 3, `equipped` still picks 2. L3 offers the unlock with an empty slot available (pure addition). L6 and L9 require picking which existing move to replace. Skip is always an option.
+- **Leveling path split** in `src/data/party.ts`:
+  - Players go through `awardXP` → bumps level counter only → stat cards shown via the UI → `applyStatCard` + `applyMoveUpgrade` apply mutations post-pick.
+  - Enemies still go through `createRiftlingAtLevel` → `applyAutoLevelUp` (the old logic, renamed), keeping enemy-scaling math unchanged so combat balance isn't silently perturbed.
+- **Template isolation fix**: `createRiftling` now deep-clones `moves` from the template (`tmpl.moves.map((m) => ({ ...m }))`). Previously every instance shared the same array reference, which was a latent bug — the old per-3-level `move.power += 1` was mutating the shared template, and the new upgrade flow that replaces slots would have leaked across instances. Fixed preemptively.
+
+**Level-up card prompt UI** (`src/ui/LevelUpCardPrompt.ts`, new file)
+
+Modelled on `RecruitPrompt`: a single overlay container at depth 500, event-based DOM keydown handler, hide()/onChoice pattern.
+
+- `showStatCards(riftling, cards, onPick)` — 3 cards side-by-side, keyboard 1–3 or click, ESC to skip.
+- `showMoveUpgrade(riftling, newMove, onPick)` — new-move preview card at top, existing moves (+ one empty slot marker if `moves.length < 3`) below as replacement targets.
+- **Current stats readout**: a compact one-line stats card sits between the header and the pick cards on the stat-card screen so the player can see what they already have. Stats that match one of the currently-offered cards are highlighted in gold; the rest are neutral. Wrapped in a dark rounded-rect panel to match the existing card-UI language.
+- Portrait + name + level header, styled consistently with the rest of the UI.
+
+**`DungeonScene` wiring**
+
+- `showLevelUps` rewritten to walk the queued `LevelUpResult[]` sequentially. For each:
+  1. Show stat cards, wait for pick, `applyStatCard`.
+  2. If the new level is 3 / 6 / 9 and the species has an upgrade move for that slot, show the move-upgrade prompt, wait for pick, `applyMoveUpgrade`.
+  3. Recurse into the next queued level-up, then call `onDone` (which then opens the recruit prompt if applicable).
+- `__gameState.triggerLevelUp(index, targetLevel)` added as a QA hook — bumps the riftling's level and drives the real card flow, for Playwright-driven tests.
+- `__gameState.isLevelUpActive()` added for test polling.
+- `LevelUpCardPrompt` instance is now included in the persistent-children set in `loadRoom`, so its container survives room transitions.
+
+**`LevelUpResult` reshape**
+
+- Was `{ riftling, gains: { stat, amount }[] }`.
+- Now `{ riftling, newLevel }`. The old `gains` array is gone because stat changes are now driven by player choice, not auto-rolls.
+
+### Tests
+
+- `tests/xp_leveling.spec.ts` updated: the "enough XP triggers a level-up" test now asserts `result.newLevel` and the level counter instead of `result.gains` and automatic HP growth. The `level-up HP gain matches level-2 expected range` and `boosted stat temperament always grants its bonus on level-up` tests were removed — both asserted the old automatic-gain behavior that no longer exists. Left a short comment noting temperament now biases the card pool, not direct gains.
+
+### Verified in-browser (Playwright)
+
+- **L2 stat pick**: 3 cards render correctly, pressing a number key applies the stat (verified speed went 82 → 86 on a +4 SPD pick), prompt dismisses.
+- **L3 move unlock (add to empty slot)**: "New Move: Flame Charge" header, 2 existing moves in red replace-mode and 1 empty slot card in cyan. Picking the empty slot grew `moves[]` to 3, `equipped` stayed `[0, 1]`.
+- **L6 move upgrade (replace)**: after clearing 3 queued stat prompts, "New Move: Cinder Trail" shown with all 3 slots in replace-mode and no empty slot. Picking slot 3 replaced Flame Charge with Cinder Trail cleanly.
+- **Template isolation**: after mutating an existing Emberhound all the way to L6 with moves swapped, injecting a fresh Emberhound still produced the original 2 moves at original power. No cross-instance leakage.
+- **Current-stats card**: renders between header and pick cards, highlights the three offered stats in gold.
+
+### Current state of the game
+
+- Player level-up is now a decision point, not a number-go-up moment. Specs diverge based on picks, and L3/L6/L9 unlocks give each riftling three authored power spikes over a run.
+- Enemy scaling is untouched — `applyAutoLevelUp` still drives `createRiftlingAtLevel`, so combat tuning from earlier sessions is preserved.
+- All 12 species have complete 3-move upgrade pools.
+
+### Deferred
+
+- **Elite enemies don't get upgrade moves.** `CombatManager` line ~535 has them equipping from the species' `moves[]` pool, which is still the 2 starting moves. Could be spiced up by giving elites access to `upgradeMoves` later — deferred to avoid scope creep.
+- **No visual "card hover reveal" on the stats row**: right now all three offered stats are highlighted at once. A nicer UX would be hovering a card to highlight *just* that stat in the readout. Cosmetic, not blocking.
+- **Move-upgrade skip is permanent.** Skipping an L3/L6/L9 upgrade throws the upgrade away for that run. Acceptable because move specialization is part of the decision, but worth watching in playtest.
+- **The Full Riftling Roster tables below** still reflect the pre-upgrade-system moveset (3 moves per species, pre-refactor). They are historical. See `src/data/party.ts` for the current `moves[] + upgradeMoves[]` split.
+
+### Known rough edges
+
+- Nothing new from Session 9's list. BUG-004 / BUG-005 / BUG-006 / GAP-001 / GAP-007 still standing.
+
+---
+
 ## Full Riftling Roster
 
 ### EMBERHOUND — Fire / Chaser

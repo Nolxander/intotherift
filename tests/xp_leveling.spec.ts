@@ -65,31 +65,15 @@ test.describe('XP & Leveling', () => {
     await waitForGameReady(page);
     await dismissTrinketSelect(page);
 
-    const before = await gs<any>(page, 'getParty()');
-    const hpBefore = before.active[0].maxHp;
-
     // 20 XP needed for level 1→2
     const result = await page.evaluate(() => (window as any).__gameState.grantXP(0, 20));
     expect(result).not.toBeNull();
-    expect(result.gains.length).toBeGreaterThan(0);
+    expect(result.newLevel).toBe(2);
 
     const after = await gs<any>(page, 'getParty()');
     expect(after.active[0].level).toBe(2);
-    // HP always grows on level-up
-    expect(after.active[0].maxHp).toBeGreaterThan(hpBefore);
-  });
-
-  test('level-up HP gain matches level-2 expected range', async ({ page }) => {
-    await page.goto('/');
-    await waitForGameReady(page);
-    await dismissTrinketSelect(page);
-
-    const result = await page.evaluate(() => (window as any).__gameState.grantXP(0, 20));
-    const hpGain = result?.gains.find((g: any) => g.stat === 'HP');
-    // HP base = 5-10, temperament bonus at most +3 → total 5-13
-    expect(hpGain).toBeDefined();
-    expect(hpGain.amount).toBeGreaterThanOrEqual(5);
-    expect(hpGain.amount).toBeLessThanOrEqual(13);
+    // Stat and move gains are picked via the card UI, so no automatic stat
+    // changes happen here — this test only verifies the level counter.
   });
 
   test('grantXP returns null at max level', async ({ page }) => {
@@ -112,40 +96,9 @@ test.describe('XP & Leveling', () => {
     expect(result).toBeNull();
   });
 
-  test('boosted stat temperament always grants its bonus on level-up', async ({ page }) => {
-    await page.goto('/');
-    await waitForGameReady(page);
-    await dismissTrinketSelect(page);
-
-    const party = await gs<any>(page, 'getParty()');
-    const ember = party.active[0];
-    const boosted = ember.temperament.boosted;
-
-    if (!boosted || boosted === 'hp') {
-      // Can't easily test non-HP boosted without controlling temperament — skip
-      test.skip();
-      return;
-    }
-
-    const statBefore = ember[boosted === 'attackSpeed' ? 'attackSpeed' : boosted];
-
-    // Force a level-up
-    const result = await page.evaluate(() => (window as any).__gameState.grantXP(0, 20));
-
-    const partyAfter = await gs<any>(page, 'getParty()');
-    const statAfter = partyAfter.active[0][boosted === 'attackSpeed' ? 'attackSpeed' : boosted];
-
-    // Boosted stat should have grown (may also include random roll)
-    if (boosted === 'attackSpeed') {
-      // attackSpeed decreases (faster attacks)
-      expect(statAfter).toBeLessThan(statBefore);
-    } else {
-      expect(statAfter).toBeGreaterThan(statBefore);
-    }
-
-    const gain = result?.gains.find((g: any) => g.stat.toLowerCase().includes(boosted.slice(0, 3)));
-    expect(gain).toBeDefined();
-  });
+  // Temperament no longer auto-applies stat gains on player level-up — it
+  // now biases the stat-card roll instead. Card-picking runs through the UI,
+  // so direct stat assertions here aren't meaningful.
 
   test('all 8 riftling species have the expected new stat fields', async ({ page }) => {
     await page.goto('/');
