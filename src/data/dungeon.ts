@@ -235,8 +235,23 @@ function shuffle<T>(arr: T[]): T[] {
  * Pick a RoomTemplate of the given type, preferring ones matching the branch
  * biome. Falls back to any template of the type if no biome match exists —
  * some RoomTypes (elite, recruit, rift_shard) have a limited template pool.
+ *
+ * Recruit rooms borrow a combat template matching the branch biome so the
+ * reward room feels thematically consistent with the rest of the branch.
  */
 function pickTemplate(type: RoomType, biome?: Biome): RoomTemplate {
+  if (type === 'recruit' && biome) {
+    const combatPool = ROOM_TEMPLATES.combat.filter((t) => t.biome === biome);
+    if (combatPool.length > 0) {
+      const base = pickRandom(combatPool);
+      return {
+        ...base,
+        type: 'recruit',
+        name: base.name + ' (Recruit)',
+        enemySpawns: [],
+      };
+    }
+  }
   const templates = ROOM_TEMPLATES[type];
   if (biome) {
     const matching = templates.filter((t) => t.biome === biome);

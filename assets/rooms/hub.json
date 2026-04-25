@@ -638,16 +638,6 @@
   "decorations": [
     {
       "sprite": "twisted_dark_tree",
-      "x": 4,
-      "y": 4
-    },
-    {
-      "sprite": "dark_pine_tree",
-      "x": 6,
-      "y": 3
-    },
-    {
-      "sprite": "twisted_dark_tree",
       "x": 3,
       "y": 7
     },
@@ -655,11 +645,6 @@
       "sprite": "twisted_dark_tree",
       "x": 19,
       "y": 3
-    },
-    {
-      "sprite": "dark_pine_tree",
-      "x": 18,
-      "y": 7
     },
     {
       "sprite": "twisted_dark_tree",
@@ -685,11 +670,6 @@
       "sprite": "twisted_dark_tree",
       "x": 19,
       "y": 24
-    },
-    {
-      "sprite": "dark_pine_tree",
-      "x": 18,
-      "y": 18
     },
     {
       "sprite": "hollow_log",
@@ -712,56 +692,6 @@
       "y": 14
     },
     {
-      "sprite": "glowing_mushroom",
-      "x": 5,
-      "y": 6
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 17,
-      "y": 6
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 5,
-      "y": 21
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 16,
-      "y": 21
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 13,
-      "y": 22
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 13,
-      "y": 20
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 13,
-      "y": 18
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 9,
-      "y": 18
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 9,
-      "y": 20
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 9,
-      "y": 22
-    },
-    {
       "sprite": "rift_crystal_cluster",
       "x": 7,
       "y": 16
@@ -780,36 +710,6 @@
       "sprite": "rift_crystal_cluster",
       "x": 7,
       "y": 11
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 13,
-      "y": 4
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 13,
-      "y": 6
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 13,
-      "y": 8
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 9,
-      "y": 8
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 9,
-      "y": 6
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 9,
-      "y": 4
     },
     {
       "sprite": "corrupted_tree",
@@ -835,11 +735,6 @@
       "sprite": "corrupted_tree",
       "x": 3,
       "y": 16
-    },
-    {
-      "sprite": "corrupted_tree",
-      "x": 18,
-      "y": 17
     },
     {
       "sprite": "corrupted_tree",
@@ -870,16 +765,6 @@
       "sprite": "corrupted_tree",
       "x": 19,
       "y": 2
-    },
-    {
-      "sprite": "dark_pine_tree",
-      "x": 17,
-      "y": 4
-    },
-    {
-      "sprite": "dark_pine_tree",
-      "x": 6,
-      "y": 5
     },
     {
       "sprite": "dark_pine_tree",
@@ -900,6 +785,91 @@
       "sprite": "dark_pine_tree",
       "x": 8,
       "y": 23
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 9,
+      "y": 18
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 13,
+      "y": 18
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 5,
+      "y": 17
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 5,
+      "y": 15
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 17,
+      "y": 15
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 18,
+      "y": 16
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 2,
+      "y": 3
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 4,
+      "y": 3
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 17,
+      "y": 3
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 13,
+      "y": 4
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 13,
+      "y": 8
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 8,
+      "y": 8
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 8,
+      "y": 4
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 4,
+      "y": 8
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 17,
+      "y": 8
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 18,
+      "y": 7
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 5,
+      "y": 8
     }
   ]
 }

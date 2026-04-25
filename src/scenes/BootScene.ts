@@ -409,10 +409,10 @@ export class BootScene extends Phaser.Scene {
     if (!this.anims.exists('rift_core_spin')) {
       this.anims.create({
         key: 'rift_core_spin',
-        frames: ['south', 'south-east', 'north-east', 'east', 'north', 'north-west', 'west', 'south-west'].map(
+        frames: ['south', 'south-west', 'west', 'north-west', 'north', 'north-east', 'east', 'south-east'].map(
           (dir) => ({ key: `rift_core_${dir}` }),
         ),
-        frameRate: 1.5,
+        frameRate: 4,
         repeat: -1,
       });
     }

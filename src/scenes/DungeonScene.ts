@@ -2644,6 +2644,39 @@ export class DungeonScene extends Phaser.Scene {
    * opens the RecruitPrompt; picking one adds it to the party and clears
    * the others. Mirrors the rift-shard spawn/check pattern.
    */
+  /**
+   * BFS outward from a tile coordinate to find the nearest walkable tile.
+   * Returns world-pixel center of the found tile, or the original position
+   * if nothing walkable is found within the search radius.
+   */
+  private findNearbyWalkable(wx: number, wy: number, maxRadius = 8): { x: number; y: number } {
+    if (this.nav?.isWalkableAt(wx, wy)) return { x: wx, y: wy };
+    const startTx = Math.floor(wx / TILE);
+    const startTy = Math.floor(wy / TILE);
+    const visited = new Set<string>();
+    const queue: { tx: number; ty: number }[] = [{ tx: startTx, ty: startTy }];
+    visited.add(`${startTx},${startTy}`);
+    while (queue.length > 0) {
+      const { tx, ty } = queue.shift()!;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = tx + dx;
+          const ny = ty + dy;
+          const key = `${nx},${ny}`;
+          if (visited.has(key)) continue;
+          if (Math.abs(nx - startTx) > maxRadius || Math.abs(ny - startTy) > maxRadius) continue;
+          visited.add(key);
+          const worldX = nx * TILE + TILE / 2;
+          const worldY = ny * TILE + TILE / 2;
+          if (this.nav?.isWalkableAt(worldX, worldY)) return { x: worldX, y: worldY };
+          queue.push({ tx: nx, ty: ny });
+        }
+      }
+    }
+    return { x: wx, y: wy };
+  }
+
   private spawnRecruitGathering(): void {
     const room = this.currentRoom;
     const tmpl = room.template;
@@ -2656,9 +2689,6 @@ export class DungeonScene extends Phaser.Scene {
     const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
     const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
 
-    // Determine entry side from trainer's spawn position relative to room
-    // center. Riftlings fan out on the axis perpendicular to entry and face
-    // the direction the player came from.
     const dxFromCenter = this.trainer.x - cx;
     const dyFromCenter = this.trainer.y - cy;
     const horizontalEntry = Math.abs(dxFromCenter) > Math.abs(dyFromCenter);
@@ -2675,8 +2705,9 @@ export class DungeonScene extends Phaser.Scene {
       const tmplDef = RIFTLING_TEMPLATES[key];
       if (!tmplDef) continue;
       const offset = i * spacing - totalLen / 2;
-      const px = horizontalEntry ? cx : cx + offset;
-      const py = horizontalEntry ? cy + offset : cy;
+      const idealX = horizontalEntry ? cx : cx + offset;
+      const idealY = horizontalEntry ? cy + offset : cy;
+      const { x: px, y: py } = this.findNearbyWalkable(idealX, idealY);
       const sprite = this.add
         .image(px, py, `${tmplDef.texturePrefix}_${facingDir}`)
         .setScale(speciesScale(tmplDef.texturePrefix))
@@ -2692,8 +2723,11 @@ export class DungeonScene extends Phaser.Scene {
       sprites.push(sprite);
     }
 
+    const avgX = sprites.length > 0 ? sprites.reduce((s, sp) => s + sp.x, 0) / sprites.length : cx;
+    const avgY = sprites.length > 0 ? sprites.reduce((s, sp) => s + sp.y, 0) / sprites.length : cy;
+
     const label = this.add
-      .text(cx, cy - 24, 'Walk here to recruit', {
+      .text(avgX, avgY - 24, 'Walk here to recruit', {
         fontFamily: 'monospace',
         fontSize: '8px',
         color: '#44ff88',
@@ -2703,9 +2737,13 @@ export class DungeonScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(100);
 
-    const zoneW = horizontalEntry ? 40 : Math.max(48, totalLen + 48);
-    const zoneH = horizontalEntry ? Math.max(48, totalLen + 48) : 40;
-    const zone = this.add.zone(cx, cy, zoneW, zoneH);
+    const minX = Math.min(...sprites.map(s => s.x));
+    const maxX = Math.max(...sprites.map(s => s.x));
+    const minY = Math.min(...sprites.map(s => s.y));
+    const maxY = Math.max(...sprites.map(s => s.y));
+    const zoneW = Math.max(48, maxX - minX + 48);
+    const zoneH = Math.max(48, maxY - minY + 48);
+    const zone = this.add.zone(avgX, avgY, zoneW, zoneH);
     this.physics.add.existing(zone, true);
 
     this.recruitGathering = { zone, sprites, label, offerings, };
@@ -2874,6 +2912,7 @@ export class DungeonScene extends Phaser.Scene {
         alpha: 0,
         scaleX: 0,
         scaleY: 0,
+        delay: 2000,
         duration: 500,
         onComplete: () => npc.destroy(),
       });

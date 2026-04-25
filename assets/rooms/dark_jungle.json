@@ -83,7 +83,103 @@
       1,
       1,
       1,
+      2,
+      2,
       1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2
+    ],
+    [
+      2,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2,
+      2,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2
+    ],
+    [
+      2,
+      1,
+      1,
+      1,
+      1,
+      2,
+      2,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2
+    ],
+    [
+      2,
+      1,
+      1,
+      1,
+      1,
+      2,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2,
       1,
       1,
       1,
@@ -114,105 +210,9 @@
       1,
       1,
       1,
-      1,
       2,
       2,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      2
-    ],
-    [
       2,
-      1,
-      1,
-      1,
-      1,
-      2,
-      2,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      2,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      2,
-      1,
-      1,
-      1,
-      1,
-      1,
-      2
-    ],
-    [
-      2,
-      1,
-      1,
-      1,
-      1,
-      2,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      2,
-      2,
-      1,
-      1,
-      1,
-      1,
-      2
-    ],
-    [
-      2,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
       1,
       1,
       1,
@@ -242,9 +242,9 @@
       1,
       1,
       1,
+      2,
       1,
-      1,
-      1,
+      2,
       1,
       1,
       1,
@@ -274,7 +274,7 @@
       1,
       1,
       1,
-      1,
+      2,
       1,
       1,
       1,
@@ -673,11 +673,6 @@
       "y": 4
     },
     {
-      "sprite": "corrupted_tree",
-      "x": 21,
-      "y": 6
-    },
-    {
       "sprite": "giant_fern",
       "x": 25,
       "y": 5
@@ -685,21 +680,6 @@
     {
       "sprite": "tall_grass_dark",
       "x": 24,
-      "y": 8
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 22,
-      "y": 8
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 14,
-      "y": 12
-    },
-    {
-      "sprite": "tall_grass_dark",
-      "x": 16,
       "y": 8
     },
     {
@@ -713,11 +693,6 @@
       "y": 14
     },
     {
-      "sprite": "glowing_mushroom",
-      "x": 5,
-      "y": 15
-    },
-    {
       "sprite": "tall_grass_dark",
       "x": 9,
       "y": 16
@@ -726,11 +701,6 @@
       "sprite": "twisted_dark_tree",
       "x": 20,
       "y": 13
-    },
-    {
-      "sprite": "giant_fern",
-      "x": 25,
-      "y": 14
     },
     {
       "sprite": "tall_grass_dark",
@@ -746,11 +716,6 @@
       "sprite": "tall_grass_dark",
       "x": 19,
       "y": 9
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 26,
-      "y": 11
     },
     {
       "sprite": "dark_pine_tree",
@@ -844,11 +809,6 @@
     },
     {
       "sprite": "tall_grass_dark",
-      "x": 16,
-      "y": 7
-    },
-    {
-      "sprite": "tall_grass_dark",
       "x": 18,
       "y": 9
     },
@@ -859,11 +819,6 @@
     },
     {
       "sprite": "tall_grass_dark",
-      "x": 16,
-      "y": 9
-    },
-    {
-      "sprite": "tall_grass_dark",
       "x": 18,
       "y": 8
     },
@@ -881,11 +836,6 @@
       "sprite": "tall_grass_dark",
       "x": 18,
       "y": 7
-    },
-    {
-      "sprite": "giant_fern",
-      "x": 1,
-      "y": 11
     },
     {
       "sprite": "giant_fern",
@@ -901,11 +851,6 @@
       "sprite": "giant_fern",
       "x": 1,
       "y": 14
-    },
-    {
-      "sprite": "giant_fern",
-      "x": 2,
-      "y": 11
     },
     {
       "sprite": "giant_fern",
@@ -1089,11 +1034,6 @@
     },
     {
       "sprite": "giant_fern",
-      "x": 26,
-      "y": 16
-    },
-    {
-      "sprite": "giant_fern",
       "x": 24,
       "y": 16
     },
@@ -1153,14 +1093,159 @@
       "y": 7
     },
     {
-      "sprite": "glowing_mushroom",
+      "sprite": "corrupted_tree",
       "x": 26,
+      "y": 3
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 25,
+      "y": 2
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 26,
+      "y": 2
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 27,
+      "y": 2
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 26,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 28,
+      "y": 14
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 28,
       "y": 13
     },
     {
+      "sprite": "twisted_dark_tree",
+      "x": 20,
+      "y": 15
+    },
+    {
+      "sprite": "hollow_log",
+      "x": 27,
+      "y": 16
+    },
+    {
       "sprite": "glowing_mushroom",
+      "x": 8,
+      "y": 3
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 5,
+      "y": 2
+    },
+    {
+      "sprite": "cliff_portal",
+      "x": 23,
+      "y": 3
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 7,
+      "y": 3
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 25,
+      "y": 8
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 25,
+      "y": 7
+    },
+    {
+      "sprite": "tall_grass_dark",
       "x": 26,
-      "y": 12
+      "y": 7
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 26,
+      "y": 6
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 25,
+      "y": 6
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 26,
+      "y": 5
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 27,
+      "y": 5
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 27,
+      "y": 6
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 27,
+      "y": 4
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 26,
+      "y": 4
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 25,
+      "y": 4
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 25,
+      "y": 5
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 10,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 9,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 9,
+      "y": 14
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 8,
+      "y": 14
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 8,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 8,
+      "y": 16
     }
   ]
 }

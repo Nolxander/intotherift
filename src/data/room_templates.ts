@@ -258,14 +258,10 @@ export const COMBAT_ROOM_2: RoomTemplate = (() => {
 })();
 
 // --- Elite room: "Rift Convergence" ---
-// A floating obsidian platform over the purple void where rift energy
-// concentrates. Crystal formations ring the arena in concentric layers:
-// outer corner anchors → cardinal outcrops → inner shard boundary.
-// Corruption nodes trace a convergence circuit on the floor. Glowing
-// mushrooms feed on the concentrated energy. Boulders torn from other
-// dimensions provide asymmetric cover. Center stays open for the
-// dynamically-positioned elite team (entry side varies).
-export const ELITE_ROOM: RoomTemplate = (() => {
+// Editable via F4 builder → saves to assets/rooms/elite.json.
+// Base template provides dark_void biome, corner cuts, and starter
+// decorations. Manual edits override everything on next reload.
+export const ELITE_ROOM: RoomTemplate = applyOverride('elite', (() => {
   const room: RoomTemplate = {
     ...makeRoom('elite', 'Rift Convergence', []),
     biome: 'dark_void',
@@ -302,50 +298,38 @@ export const ELITE_ROOM: RoomTemplate = (() => {
 
   room.decorations = [
     // ── Outer frame: corner crystal formations ────────────────────────
-    // Largest crystals at diagonal positions, just inside the void cuts.
-    { sprite: 'rift_crystal_formation', x: 5,  y: 4 },   // NW
-    { sprite: 'rift_crystal_formation', x: 24, y: 4 },   // NE
-    { sprite: 'rift_crystal_formation', x: 5,  y: 15 },  // SW
-    { sprite: 'rift_crystal_formation', x: 24, y: 15 },  // SE
+    { sprite: 'rift_crystal_formation', x: 5,  y: 4 },
+    { sprite: 'rift_crystal_formation', x: 24, y: 4 },
+    { sprite: 'rift_crystal_formation', x: 5,  y: 15 },
+    { sprite: 'rift_crystal_formation', x: 24, y: 15 },
 
     // ── Cardinal markers: mid-wall outcrops ───────────────────────────
-    // Dark rocky outcrops with crystal growths marking energy entry points.
-    { sprite: 'rift_crystal_outcrop', x: 15,  y: 2 },   // N
-    { sprite: 'rift_crystal_outcrop', x: 3,   y: 10 },  // W
-    { sprite: 'rift_crystal_outcrop', x: 26,  y: 10 },  // E
-    { sprite: 'rift_crystal_outcrop', x: 15,  y: 17 },  // S
+    { sprite: 'rift_crystal_outcrop', x: 15,  y: 2 },
+    { sprite: 'rift_crystal_outcrop', x: 3,   y: 10 },
+    { sprite: 'rift_crystal_outcrop', x: 26,  y: 10 },
+    { sprite: 'rift_crystal_outcrop', x: 15,  y: 17 },
 
     // ── Inner ritual boundary: glowing shards ─────────────────────────
-    // Bright luminous crystals in a diamond ~5 tiles from center.
-    { sprite: 'rift_crystal_shard', x: 15,  y: 5 },   // N
-    { sprite: 'rift_crystal_shard', x: 9,   y: 10 },  // W
-    { sprite: 'rift_crystal_shard', x: 21,  y: 10 },  // E
-    { sprite: 'rift_crystal_shard', x: 15,  y: 14 },  // S
+    { sprite: 'rift_crystal_shard', x: 15,  y: 5 },
+    { sprite: 'rift_crystal_shard', x: 9,   y: 10 },
+    { sprite: 'rift_crystal_shard', x: 21,  y: 10 },
+    { sprite: 'rift_crystal_shard', x: 15,  y: 14 },
 
     // ── Convergence circuit: corruption nodes ─────────────────────────
-    // Pulsing nodes tracing energy flow between the outer frame and
-    // inner boundary. Arranged in arcs connecting corner→cardinal→corner.
-    // NW arc
     { sprite: 'rift_corruption_node', x: 8,   y: 3 },
     { sprite: 'rift_corruption_node', x: 4,   y: 7 },
-    // NE arc
     { sprite: 'rift_corruption_node', x: 21,  y: 3 },
     { sprite: 'rift_corruption_node', x: 25,  y: 7 },
-    // SW arc
     { sprite: 'rift_corruption_node', x: 4,   y: 13 },
     { sprite: 'rift_corruption_node', x: 8,   y: 16 },
-    // SE arc
     { sprite: 'rift_corruption_node', x: 25,  y: 13 },
     { sprite: 'rift_corruption_node', x: 21,  y: 16 },
-    // Inner floor nodes — energy seeping through obsidian cracks
     { sprite: 'rift_corruption_node', x: 12,  y: 7 },
     { sprite: 'rift_corruption_node', x: 18,  y: 7 },
     { sprite: 'rift_corruption_node', x: 12,  y: 13 },
     { sprite: 'rift_corruption_node', x: 18,  y: 13 },
 
     // ── Bioluminescent life: glowing mushrooms ────────────────────────
-    // Alien fungi feeding on concentrated rift energy. Blue-cyan glow
-    // provides cool-toned contrast against the purple void.
     { sprite: 'glowing_mushroom', x: 2,   y: 5 },
     { sprite: 'glowing_mushroom', x: 27,  y: 5 },
     { sprite: 'glowing_mushroom', x: 2,   y: 14 },
@@ -353,14 +337,14 @@ export const ELITE_ROOM: RoomTemplate = (() => {
     { sprite: 'glowing_mushroom', x: 8,   y: 9 },
     { sprite: 'glowing_mushroom', x: 22,  y: 11 },
 
-    // ── Dimensional debris: boulders from other worlds ────────────────
-    // Asymmetric placement prevents the room from feeling too perfect.
+    // ── Dimensional debris: boulders ──────────────────────────────────
     { sprite: 'badlands_cracked_boulder', x: 10, y: 12 },
     { sprite: 'badlands_cracked_boulder', x: 20, y: 7 },
   ];
 
+  (room as RoomTemplate & { __editorKey: string }).__editorKey = 'elite';
   return room;
-})();
+})());
 
 // --- Boss room: the Rift Tyrant's containment crucible ---
 // Narrative: the Rift Elite stands silent at the back of the arena, having
@@ -1800,7 +1784,9 @@ export const GRASS_TEST_ROOM: RoomTemplate = (() => {
 export const TEST_ROOMS: Record<string, RoomTemplate> = {
   grass_test: GRASS_TEST_ROOM,
   dark_forest: DARK_FOREST_TEST_ROOM,
+  dark_forest_combat: DARK_FOREST_ROOM,
   plains: PLAINS_TEST_ROOM,
+  plains_combat: PLAINS_ROOM,
   dark_lava: LAVA_TEST_ROOM,
   lava: LAVA_ROOM,
   dark_badlands: BADLANDS_TEST_ROOM,
@@ -1813,6 +1799,9 @@ export const TEST_ROOMS: Record<string, RoomTemplate> = {
   windbreak_ridge: WINDBREAK_RIDGE_ROOM,
   crystal_flats: CRYSTAL_FLATS_ROOM,
   elite: ELITE_ROOM,
+  boss: BOSS_ROOM,
+  start: START_ROOM,
+  water_combat: WATER_COMBAT_ROOM,
 };
 
 // All templates by type for dungeon generation

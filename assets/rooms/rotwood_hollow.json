@@ -1121,17 +1121,212 @@
     {
       "sprite": "glowing_mushroom",
       "x": 1,
-      "y": 9
+      "y": 15
     },
     {
       "sprite": "glowing_mushroom",
       "x": 1,
+      "y": 14
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 1,
+      "y": 16
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 2,
+      "y": 7
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 2,
+      "y": 6
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 3,
+      "y": 6
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 1,
+      "y": 6
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 2,
+      "y": 5
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 1,
+      "y": 5
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 1,
+      "y": 4
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 25,
+      "y": 5
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 25,
+      "y": 6
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 24,
+      "y": 5
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 25,
+      "y": 4
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 26,
+      "y": 6
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 26,
+      "y": 14
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 25,
+      "y": 14
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 24,
       "y": 13
     },
     {
       "sprite": "glowing_mushroom",
-      "x": 1,
+      "x": 25,
+      "y": 13
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 2,
       "y": 15
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 2,
+      "y": 16
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 1,
+      "y": 17
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 3,
+      "y": 17
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 2,
+      "y": 17
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 27,
+      "y": 3
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 27,
+      "y": 2
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 27,
+      "y": 16
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 28,
+      "y": 17
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 4,
+      "y": 4
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 3,
+      "y": 3
+    },
+    {
+      "sprite": "twisted_dark_tree",
+      "x": 6,
+      "y": 4
+    },
+    {
+      "sprite": "twisted_dark_tree",
+      "x": 6,
+      "y": 12
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 27,
+      "y": 5
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 2,
+      "y": 4
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 4,
+      "y": 16
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 24,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 11,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 10,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 10,
+      "y": 14
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 11,
+      "y": 14
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 11,
+      "y": 13
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 10,
+      "y": 13
     }
   ]
 }

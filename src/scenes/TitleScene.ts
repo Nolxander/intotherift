@@ -39,12 +39,10 @@ export class TitleScene extends Phaser.Scene {
     this.riftParticles = [];
 
     applyStoredVolume(this);
-    this.sound.stopAll();
+    this.sound.removeAll();
     if (this.cache.audio.exists('music_title')) {
       const startMusic = () => {
-        if (!this.sound.get('music_title')) {
-          this.sound.play('music_title', { loop: true, volume: 0.5 });
-        }
+        this.sound.play('music_title', { loop: true, volume: 0.5 });
       };
       if (this.sound.locked) {
         this.sound.once(Phaser.Sound.Events.UNLOCKED, startMusic);

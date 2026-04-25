@@ -184,39 +184,7 @@
       1,
       1,
       1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      2
-    ],
-    [
-      2,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
+      4,
       1,
       1,
       1,
@@ -240,6 +208,38 @@
       1,
       1,
       1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      4,
+      4,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      2
+    ],
+    [
+      2,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      4,
+      4,
       1,
       4,
       4,
@@ -366,7 +366,7 @@
       1,
       1,
       1,
-      1,
+      4,
       2,
       2,
       2,
@@ -401,6 +401,7 @@
       1,
       1,
       1,
+      4,
       1,
       1,
       1,
@@ -408,8 +409,7 @@
       1,
       1,
       1,
-      1,
-      1,
+      4,
       1,
       1,
       1,
@@ -433,8 +433,8 @@
       1,
       1,
       1,
-      1,
-      1,
+      4,
+      4,
       1,
       1,
       1,
@@ -511,9 +511,9 @@
       2,
       2,
       4,
-      1,
-      1,
-      1,
+      4,
+      4,
+      4,
       2
     ],
     [
@@ -545,7 +545,7 @@
       4,
       1,
       1,
-      1,
+      4,
       2
     ],
     [
@@ -576,8 +576,8 @@
       1,
       4,
       1,
-      1,
-      1,
+      4,
+      4,
       2
     ],
     [
@@ -603,13 +603,13 @@
       1,
       1,
       1,
+      4,
+      4,
+      4,
       1,
+      4,
       1,
-      1,
-      1,
-      1,
-      1,
-      1,
+      4,
       2
     ],
     [
@@ -674,34 +674,9 @@
   "biome": "dark_lava",
   "decorations": [
     {
-      "sprite": "rift_corruption_node",
-      "x": 15,
-      "y": 6
-    },
-    {
-      "sprite": "rift_corruption_node",
-      "x": 15,
-      "y": 13
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 11,
-      "y": 12
-    },
-    {
       "sprite": "glowing_mushroom",
       "x": 4,
       "y": 12
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 25,
-      "y": 12
-    },
-    {
-      "sprite": "rift_corruption_node",
-      "x": 8,
-      "y": 3
     },
     {
       "sprite": "rift_corruption_node",
@@ -772,6 +747,141 @@
       "sprite": "rift_crystal_cluster",
       "x": 26,
       "y": 1
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 1,
+      "y": 6
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 7,
+      "y": 18
+    },
+    {
+      "sprite": "rift_crystal_cluster",
+      "x": 28,
+      "y": 4
+    },
+    {
+      "sprite": "badlands_rock_cluster",
+      "x": 24,
+      "y": 1
+    },
+    {
+      "sprite": "badlands_rock_cluster",
+      "x": 23,
+      "y": 1
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 10,
+      "y": 1
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 12,
+      "y": 1
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 12,
+      "y": 2
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 8,
+      "y": 1
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 9,
+      "y": 1
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 1,
+      "y": 5
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 1,
+      "y": 18
+    },
+    {
+      "sprite": "badlands_small_rock",
+      "x": 1,
+      "y": 17
+    },
+    {
+      "sprite": "badlands_rock_cluster",
+      "x": 8,
+      "y": 2
+    },
+    {
+      "sprite": "badlands_rock_cluster",
+      "x": 2,
+      "y": 18
+    },
+    {
+      "sprite": "rift_crystal_outcrop",
+      "x": 27,
+      "y": 13
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 28,
+      "y": 12
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 27,
+      "y": 12
+    },
+    {
+      "sprite": "rift_corruption_node",
+      "x": 28,
+      "y": 13
+    },
+    {
+      "sprite": "rift_corruption_node",
+      "x": 28,
+      "y": 11
+    },
+    {
+      "sprite": "rift_corruption_node",
+      "x": 9,
+      "y": 2
+    },
+    {
+      "sprite": "rift_corruption_node",
+      "x": 9,
+      "y": 3
+    },
+    {
+      "sprite": "rift_corruption_node",
+      "x": 8,
+      "y": 3
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 10,
+      "y": 12
+    },
+    {
+      "sprite": "glowing_mushroom",
+      "x": 9,
+      "y": 12
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 17,
+      "y": 5
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 15,
+      "y": 13
     }
   ]
 }

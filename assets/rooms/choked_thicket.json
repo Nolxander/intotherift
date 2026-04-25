@@ -384,7 +384,7 @@
       2,
       2,
       1,
-      1,
+      2,
       1,
       3
     ],
@@ -416,7 +416,7 @@
       2,
       2,
       1,
-      1,
+      2,
       1,
       2
     ],
@@ -446,10 +446,10 @@
       1,
       1,
       1,
+      2,
+      2,
       1,
-      1,
-      1,
-      1,
+      2,
       2
     ],
     [
@@ -699,11 +699,6 @@
       "y": 12.5
     },
     {
-      "sprite": "twisted_dark_tree",
-      "x": 25,
-      "y": 11.5
-    },
-    {
       "sprite": "dark_pine_tree",
       "x": 11,
       "y": 15.5
@@ -712,11 +707,6 @@
       "sprite": "dark_pine_tree",
       "x": 21,
       "y": 15.5
-    },
-    {
-      "sprite": "glowing_mushroom",
-      "x": 11,
-      "y": 5
     },
     {
       "sprite": "glowing_mushroom",
@@ -790,11 +780,6 @@
     },
     {
       "sprite": "tall_grass_dark",
-      "x": 23,
-      "y": 17
-    },
-    {
-      "sprite": "tall_grass_dark",
       "x": 11,
       "y": 6
     },
@@ -837,6 +822,436 @@
       "sprite": "tall_grass_dark",
       "x": 14,
       "y": 7
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 18,
+      "y": 7
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 19,
+      "y": 6
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 18,
+      "y": 6
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 23,
+      "y": 3
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 24,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 23,
+      "y": 2
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 11,
+      "y": 5
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 10,
+      "y": 5
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 9,
+      "y": 5
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 8,
+      "y": 5
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 10,
+      "y": 6
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 7,
+      "y": 5
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 25,
+      "y": 16
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 27,
+      "y": 16
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 27,
+      "y": 15
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 26,
+      "y": 14
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 25,
+      "y": 14
+    },
+    {
+      "sprite": "corrupted_tree",
+      "x": 25,
+      "y": 15
+    },
+    {
+      "sprite": "twisted_dark_tree",
+      "x": 2,
+      "y": 15
+    },
+    {
+      "sprite": "twisted_dark_tree",
+      "x": 4,
+      "y": 12
+    },
+    {
+      "sprite": "twisted_dark_tree",
+      "x": 5,
+      "y": 11
+    },
+    {
+      "sprite": "twisted_dark_tree",
+      "x": 8,
+      "y": 7
+    },
+    {
+      "sprite": "twisted_dark_tree",
+      "x": 9,
+      "y": 6
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 3,
+      "y": 3
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 4,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 3,
+      "y": 2
+    },
+    {
+      "sprite": "hollow_log",
+      "x": 26,
+      "y": 2
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 26,
+      "y": 11
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 27,
+      "y": 11
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 27,
+      "y": 12
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 25,
+      "y": 11
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 24,
+      "y": 12
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 24,
+      "y": 11
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 25,
+      "y": 12
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 28,
+      "y": 11
+    },
+    {
+      "sprite": "giant_fern",
+      "x": 28,
+      "y": 12
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 10,
+      "y": 16
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 10,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 11,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 11,
+      "y": 16
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 20,
+      "y": 14
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 21,
+      "y": 14
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 20,
+      "y": 15
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 2,
+      "y": 17
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 3,
+      "y": 16
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 2,
+      "y": 16
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 3,
+      "y": 15
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 1,
+      "y": 15
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 1,
+      "y": 16
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 1,
+      "y": 14
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 11,
+      "y": 14
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 10,
+      "y": 14
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 18,
+      "y": 15
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 19,
+      "y": 13
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 18,
+      "y": 13
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 19,
+      "y": 12
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 18,
+      "y": 12
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 11,
+      "y": 7
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 7,
+      "y": 6
+    },
+    {
+      "sprite": "tall_grass_dark",
+      "x": 18,
+      "y": 6
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 6,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 4,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 5,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 7,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 8,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 10,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 11,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 10,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 9,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 11,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 6,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 3,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 2,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 1,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 2,
+      "y": 3
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 2,
+      "y": 4
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 1,
+      "y": 4
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 25,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 25,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 24,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 26,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 27,
+      "y": 1
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 27,
+      "y": 3
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 28,
+      "y": 3
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 28,
+      "y": 2
+    },
+    {
+      "sprite": "dark_pine_tree",
+      "x": 23,
+      "y": 1
     }
   ]
 }
