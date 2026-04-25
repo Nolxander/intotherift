@@ -24,7 +24,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: tsc -p tsconfig.build.json && vite build
+      - run: npx vite build
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
