@@ -23,6 +23,11 @@ export interface HubDoorSlot {
   slot: number;
   tx: number;
   ty: number;
+  /**
+   * Tiles the door spans along its wall. Defaults to 2. Side-wall doors
+   * (east/west) span vertically; north/south-wall doors span horizontally.
+   */
+  span?: number;
 }
 
 /**
@@ -43,6 +48,40 @@ export interface Decoration {
   sprite: string;
   x: number;
   y: number;
+  /** Per-instance override: force this decoration to be non-colliding
+   *  even if its catalog entry is collidable. Used e.g. for the hub
+   *  spring crystals so the player can walk onto the healing plaza. */
+  noCollide?: boolean;
+}
+
+/**
+ * Non-interactive creature sprite placed as set dressing — e.g. the Rift
+ * Elite watching from the back of the boss arena. Different from
+ * `decorations` (which uses the prop catalog at `assets/objects/`) because
+ * the texture is loaded from a creature sprite folder and we play an idle
+ * animation on it. Static actors are non-combat — they don't take or deal
+ * damage and aren't tracked by the combat manager.
+ */
+export interface StaticActor {
+  /**
+   * Texture/animation key prefix matching what BootScene loaded. e.g.
+   * 'rift_elite' resolves to `rift_elite_<dir>` static rotation textures
+   * and `rift_elite_idle_<dir>` idle animation keys.
+   */
+  sprite: string;
+  /** Tile coords (fractional allowed) of the actor's foot position. */
+  x: number;
+  y: number;
+  /** Facing direction. Defaults to 'south' (toward the player entry). */
+  direction?: 'south' | 'east' | 'west' | 'north';
+  /** Render scale multiplier on top of native sprite size. Default 0.85 (matches the player). */
+  scale?: number;
+  /**
+   * If true, the actor has a static collision body so combat units can't
+   * walk through them. Default true — they read as substantive presences,
+   * not background art.
+   */
+  collides?: boolean;
 }
 
 /**
@@ -53,7 +92,7 @@ export interface Decoration {
 export interface EliteTeamMember {
   riftlingKey: string;
   /** Indices into the species' moves array. Omit to use the species' first two moves. */
-  equipped?: [number, number];
+  equipped?: number[];
   /** Level offset added to the room's computed difficulty level (e.g. +2 for a "captain"). */
   levelBonus?: number;
 }
@@ -79,6 +118,11 @@ export interface RoomTemplate {
   paths?: number[][];
   /** Decorative props placed on the floor. Rendered above the tileset. */
   decorations?: Decoration[];
+  /**
+   * Non-interactive creature sprites placed as set dressing (e.g. the Rift
+   * Elite presiding over the boss arena). Spawned with idle animations.
+   */
+  staticActors?: StaticActor[];
   /**
    * Elite trainer's pre-made team. When present on an 'elite' or 'boss' room,
    * overrides random enemy generation and spawns this fixed squad with
@@ -213,25 +257,241 @@ export const COMBAT_ROOM_2: RoomTemplate = (() => {
   return room;
 })();
 
-// --- Elite room: rift trainer commands a pre-made squad of three ---
-// The squad roster is authored; positioning is computed at runtime from
-// team roles and the player's entry side. The trainer NPC vanishes on victory.
+// --- Elite room: "Rift Convergence" ---
+// A floating obsidian platform over the purple void where rift energy
+// concentrates. Crystal formations ring the arena in concentric layers:
+// outer corner anchors → cardinal outcrops → inner shard boundary.
+// Corruption nodes trace a convergence circuit on the floor. Glowing
+// mushrooms feed on the concentrated energy. Boulders torn from other
+// dimensions provide asymmetric cover. Center stays open for the
+// dynamically-positioned elite team (entry side varies).
 export const ELITE_ROOM: RoomTemplate = (() => {
-  const room = makeRoom('elite', 'Rift Warden\'s Sanctum', []);
+  const room: RoomTemplate = {
+    ...makeRoom('elite', 'Rift Convergence', []),
+    biome: 'dark_void',
+  };
+
+  const W = room.width;   // 30
+  const H = room.height;  // 20
+
+  // Carve octagonal corners — 3-tile wedges into the void so the room
+  // reads as a floating platform, not a rectangle.
+  const trim = (x: number, y: number) => { room.tiles[y][x] = 2; };
+  // NW
+  for (let y = 1; y <= 3; y++)
+    for (let x = 1; x <= 4 - y; x++) trim(x, y);
+  // NE
+  for (let y = 1; y <= 3; y++)
+    for (let x = W - 2; x >= W - 5 + y; x--) trim(x, y);
+  // SW
+  for (let y = H - 2; y >= H - 4; y--) {
+    const depth = H - 1 - y;
+    for (let x = 1; x <= 4 - depth; x++) trim(x, y);
+  }
+  // SE
+  for (let y = H - 2; y >= H - 4; y--) {
+    const depth = H - 1 - y;
+    for (let x = W - 2; x >= W - 5 + depth; x--) trim(x, y);
+  }
+
   room.eliteTeam = [
-    { riftlingKey: 'pyreshell',    equipped: [0, 1] }, // fire anchor — melee frontline
-    { riftlingKey: 'tidecrawler',  equipped: [0, 1] }, // water anchor — melee frontline
-    { riftlingKey: 'thistlebound', equipped: [0, 2] }, // nature hunter — ranged backline
+    { riftlingKey: 'pyreshell',    equipped: [0, 1] },
+    { riftlingKey: 'tidecrawler',  equipped: [0, 1] },
+    { riftlingKey: 'thistlebound', equipped: [0, 2] },
   ];
+
+  room.decorations = [
+    // ── Outer frame: corner crystal formations ────────────────────────
+    // Largest crystals at diagonal positions, just inside the void cuts.
+    { sprite: 'rift_crystal_formation', x: 5,  y: 4 },   // NW
+    { sprite: 'rift_crystal_formation', x: 24, y: 4 },   // NE
+    { sprite: 'rift_crystal_formation', x: 5,  y: 15 },  // SW
+    { sprite: 'rift_crystal_formation', x: 24, y: 15 },  // SE
+
+    // ── Cardinal markers: mid-wall outcrops ───────────────────────────
+    // Dark rocky outcrops with crystal growths marking energy entry points.
+    { sprite: 'rift_crystal_outcrop', x: 15,  y: 2 },   // N
+    { sprite: 'rift_crystal_outcrop', x: 3,   y: 10 },  // W
+    { sprite: 'rift_crystal_outcrop', x: 26,  y: 10 },  // E
+    { sprite: 'rift_crystal_outcrop', x: 15,  y: 17 },  // S
+
+    // ── Inner ritual boundary: glowing shards ─────────────────────────
+    // Bright luminous crystals in a diamond ~5 tiles from center.
+    { sprite: 'rift_crystal_shard', x: 15,  y: 5 },   // N
+    { sprite: 'rift_crystal_shard', x: 9,   y: 10 },  // W
+    { sprite: 'rift_crystal_shard', x: 21,  y: 10 },  // E
+    { sprite: 'rift_crystal_shard', x: 15,  y: 14 },  // S
+
+    // ── Convergence circuit: corruption nodes ─────────────────────────
+    // Pulsing nodes tracing energy flow between the outer frame and
+    // inner boundary. Arranged in arcs connecting corner→cardinal→corner.
+    // NW arc
+    { sprite: 'rift_corruption_node', x: 8,   y: 3 },
+    { sprite: 'rift_corruption_node', x: 4,   y: 7 },
+    // NE arc
+    { sprite: 'rift_corruption_node', x: 21,  y: 3 },
+    { sprite: 'rift_corruption_node', x: 25,  y: 7 },
+    // SW arc
+    { sprite: 'rift_corruption_node', x: 4,   y: 13 },
+    { sprite: 'rift_corruption_node', x: 8,   y: 16 },
+    // SE arc
+    { sprite: 'rift_corruption_node', x: 25,  y: 13 },
+    { sprite: 'rift_corruption_node', x: 21,  y: 16 },
+    // Inner floor nodes — energy seeping through obsidian cracks
+    { sprite: 'rift_corruption_node', x: 12,  y: 7 },
+    { sprite: 'rift_corruption_node', x: 18,  y: 7 },
+    { sprite: 'rift_corruption_node', x: 12,  y: 13 },
+    { sprite: 'rift_corruption_node', x: 18,  y: 13 },
+
+    // ── Bioluminescent life: glowing mushrooms ────────────────────────
+    // Alien fungi feeding on concentrated rift energy. Blue-cyan glow
+    // provides cool-toned contrast against the purple void.
+    { sprite: 'glowing_mushroom', x: 2,   y: 5 },
+    { sprite: 'glowing_mushroom', x: 27,  y: 5 },
+    { sprite: 'glowing_mushroom', x: 2,   y: 14 },
+    { sprite: 'glowing_mushroom', x: 27,  y: 14 },
+    { sprite: 'glowing_mushroom', x: 8,   y: 9 },
+    { sprite: 'glowing_mushroom', x: 22,  y: 11 },
+
+    // ── Dimensional debris: boulders from other worlds ────────────────
+    // Asymmetric placement prevents the room from feeling too perfect.
+    { sprite: 'badlands_cracked_boulder', x: 10, y: 12 },
+    { sprite: 'badlands_cracked_boulder', x: 20, y: 7 },
+  ];
+
   return room;
 })();
 
-// --- Boss room: large open space ---
-export const BOSS_ROOM: RoomTemplate = makeRoom(
-  'boss',
-  'Boss Arena',
-  [{ x: 15, y: 7 }],
-);
+// --- Boss room: the Rift Tyrant's containment crucible ---
+// Narrative: the Rift Elite stands silent at the back of the arena, having
+// captured and weaponized the Tyrant. The fight the player thinks they're
+// having (Tyrant smash) is the fight the Elite wants them to have. The
+// player only realizes who the real threat was after the Tyrant falls.
+//
+// Visual language: floating obsidian shrine over the rift void (`dark_void`
+// biome reused from the Rift Shard chamber, so the boss room reads as the
+// *true* core of that shrine motif). Crystal wards ring a central dais
+// where the Tyrant spawns; the Elite stands at the north wall flanked by
+// two unlit braziers. Toppled stone in the south half implies prior
+// failed challengers and gives ranged riftlings sightline-breakers.
+export const BOSS_ROOM: RoomTemplate = applyOverride('boss', (() => {
+  const room: RoomTemplate = {
+    ...makeRoom('boss', 'Boss Arena', [{ x: 15, y: 10 }]),
+    biome: 'dark_void',
+  };
+
+  // Seal every door except the south entry — the Elite IS the wall to the
+  // north, and there is no escape sideways. makeRoom places door tiles at
+  // x=13..16 of y=0 (N), x=13..16 of y=H-1 (S), y=8..11 of x=0 (W) and
+  // x=W-1 (E). Convert all but S to wall (tile 2).
+  const W = room.width;
+  const H = room.height;
+  for (let x = 13; x <= 16; x++) room.tiles[0][x] = 2;             // N sealed
+  for (let y = 8; y <= 11; y++) room.tiles[y][0] = 2;              // W sealed
+  for (let y = 8; y <= 11; y++) room.tiles[y][W - 1] = 2;          // E sealed
+  // South door at y=H-1, x=13..16 stays as tile 3 (player entry).
+
+  room.eliteTeam = [
+    { riftlingKey: 'rift_tyrant', equipped: [0, 1, 2], levelBonus: 2 },
+  ];
+
+  // The shadowy figure presiding over the fight — non-combatant. Anchors
+  // the central north axis between two crystal-outcrop braziers.
+  room.staticActors = [
+    { sprite: 'rift_core', x: 15, y: 1, direction: 'south', collides: false, scale: 1.0 },
+    { sprite: 'rift_elite', x: 15, y: 3, direction: 'south' },
+  ];
+
+  room.decorations = [
+    // Elite's flanking braziers — frame the figure like a throne. Larger
+    // outcrops than the dais wards so the back of the room reads as
+    // visually heavier than the front.
+    { sprite: 'rift_crystal_outcrop',  x: 12, y: 4 },
+    { sprite: 'rift_crystal_outcrop',  x: 18, y: 4 },
+
+    // ── Control thread: Elite → Tyrant ─────────────────────────────────
+    //   y=5  bright cluster at Elite's feet — origin of the leash
+    //   y=6  paired clusters offset slightly — energy radiating outward
+    //   y=7  central cluster — the line continues
+    //   y=8  paired clusters — energy converging
+    //   y=9  bright cluster on the Tyrant's edge — the leash terminates here
+    { sprite: 'rift_crystal_cluster',  x: 15, y: 5 },
+    { sprite: 'rift_corruption_node',  x: 14.3, y: 6 },
+    { sprite: 'rift_corruption_node',  x: 15.7, y: 6 },
+    { sprite: 'rift_crystal_cluster',  x: 15, y: 7 },
+    { sprite: 'rift_corruption_node',  x: 14.3, y: 8 },
+    { sprite: 'rift_corruption_node',  x: 15.7, y: 8 },
+    { sprite: 'rift_crystal_cluster',  x: 15, y: 9 },
+
+    // Dais wards — four tall shards forming a containment ritual around
+    // the Tyrant spawn at (15, 10). Walls of light, not walls of stone.
+    { sprite: 'rift_crystal_shard',    x: 12, y: 9 },
+    { sprite: 'rift_crystal_shard',    x: 18, y: 9 },
+    { sprite: 'rift_crystal_shard',    x: 12, y: 12 },
+    { sprite: 'rift_crystal_shard',    x: 18, y: 12 },
+
+    // ── Lava: corruption made literal ──────────────────────────────────
+    // Pools of molten rift-fire seeping through the cracked obsidian.
+    // Densest at the Elite's flanks and beneath the dais (the leash heats
+    // the floor under the Tyrant); thinning out toward the south entry.
+    // This sells the "fiery" read and provides the warm element the rift
+    // palette otherwise lacks.
+
+    // Elite's flanking pools — heat radiates from where the Elite stands.
+    { sprite: 'lava_pool', x: 10, y: 4 },
+    { sprite: 'lava_pool', x: 11, y: 5 },
+    { sprite: 'lava_pool', x: 19, y: 5 },
+    { sprite: 'lava_pool', x: 20, y: 4 },
+
+    // North corner edges — embers along the wall.
+    { sprite: 'lava_pool', x: 2,  y: 5 },
+    { sprite: 'lava_pool', x: 3,  y: 6 },
+    { sprite: 'lava_pool', x: 26, y: 6 },
+    { sprite: 'lava_pool', x: 27, y: 5 },
+
+    // Around the dais — the leash heats the ritual floor.
+    { sprite: 'lava_pool', x: 10, y: 10 },
+    { sprite: 'lava_pool', x: 10, y: 11 },
+    { sprite: 'lava_pool', x: 20, y: 10 },
+    { sprite: 'lava_pool', x: 20, y: 11 },
+    { sprite: 'lava_pool', x: 14, y: 13 },
+    { sprite: 'lava_pool', x: 16, y: 13 },
+
+    // Mid-arena edges — fingers of lava reaching into the player's space.
+    { sprite: 'lava_pool', x: 2,  y: 11 },
+    { sprite: 'lava_pool', x: 3,  y: 12 },
+    { sprite: 'lava_pool', x: 27, y: 11 },
+    { sprite: 'lava_pool', x: 26, y: 12 },
+
+    // South thinning — fewer, fading toward the entry causeway.
+    { sprite: 'lava_pool', x: 4,  y: 17 },
+    { sprite: 'lava_pool', x: 25, y: 17 },
+
+    // Outer corner anchors — large formations frame the arena, reinforce
+    // the "this is a sacred/sealed space" silhouette.
+    { sprite: 'rift_crystal_formation', x: 4,  y: 3 },
+    { sprite: 'rift_crystal_formation', x: 25, y: 3 },
+    { sprite: 'rift_crystal_formation', x: 4,  y: 16 },
+    { sprite: 'rift_crystal_formation', x: 25, y: 16 },
+
+    // Toppled stone in the south half — broken cover, hints at prior
+    // failed challengers. Off-center, asymmetric on purpose.
+    { sprite: 'badlands_cracked_boulder', x: 9,  y: 13 },
+    { sprite: 'badlands_cracked_boulder', x: 22, y: 14 },
+    { sprite: 'badlands_rock_cluster',    x: 7,  y: 15 },
+    { sprite: 'badlands_rock_cluster',    x: 21, y: 12 },
+
+    // Floor litter near the entry causeway — small fragments fading toward
+    // the dais. Reinforces the "things break here" reading.
+    { sprite: 'rift_crystal_cluster', x: 13, y: 16 },
+    { sprite: 'rift_crystal_cluster', x: 17, y: 16 },
+    { sprite: 'rift_crystal_cluster', x: 8,  y: 11 },
+    { sprite: 'rift_crystal_cluster', x: 22, y: 11 },
+  ];
+
+  (room as RoomTemplate & { __editorKey: string }).__editorKey = 'boss';
+  return room;
+})());
 
 // --- Healing room: safe, no enemies ---
 export const HEALING_ROOM: RoomTemplate = makeRoom('healing', 'Rift Spring');
@@ -333,6 +593,7 @@ export const RIFT_SHARD_ROOM: RoomTemplate = (() => {
 export const START_ROOM: RoomTemplate = applyOverride('start', {
   ...makeRoom('start', 'Rift Entrance'),
   biome: 'dark_grass_cliff',
+  decorations: [],
   __editorKey: 'start',
 } as RoomTemplate & { __editorKey: string });
 
@@ -1327,15 +1588,15 @@ export const CRYSTAL_FLATS_ROOM: RoomTemplate = (() => {
 // --- Hub room: narrow vertical hall ---
 //
 // Layout (22 wide, 26 tall). Branches hang off the east and west walls
-// (3 per side = 6 regular branches, slots 0-5). The north wall carries
-// two special doors: the key path (slot 6) and the boss (slot 7), both
-// locked at run start and unlocked by the scene via refreshHubDoorStates
-// based on dungeon progress. The south end is the one-way intro return
-// door — walkable on entry but no scene zone, which is how we enforce
-// "no backtrack to intro". A healing fountain sits at the vertical
-// center of the hall and resets every time the player returns here.
+// (3 per side = 6 regular branches, slots 0-5). The north wall carries a
+// single wide boss door (slot 7), locked at run start and unlocked by the
+// scene via refreshHubDoorStates once enough regular branches are cleared.
+// The south end is the one-way intro return door — walkable on entry but
+// no scene zone, which is how we enforce "no backtrack to intro". A
+// healing fountain sits at the vertical center of the hall and resets
+// every time the player returns here.
 //
-//        [key path] [boss]
+//            [  boss  ]
 //   +----------------------+
 //   |                      |
 // [slot 0]            [slot 3]
@@ -1352,32 +1613,32 @@ export const HUB_ROOM: RoomTemplate = (() => {
   const W = 22;
   const H = 26;
   // Authored door positions. Slots 0-5 are regular branches (HUB_SLOT_LAYOUTS
-  // in dungeon.ts has the matching entry-room offsets). Slots 6 and 7 are
-  // the key-path and boss doors — they live on the north wall and are
-  // placed/unlocked by dungeon.ts independently of the regular slot pool.
-  const slots: Array<{ slot: number; tx: number; ty: number }> = [
+  // in dungeon.ts has the matching entry-room offsets). Slot 7 is the wide
+  // boss door at the top of the hall — placed/unlocked by dungeon.ts
+  // independently of the regular slot pool.
+  const slots: HubDoorSlot[] = [
     { slot: 0, tx: 0,      ty: 5  }, // W-top
     { slot: 1, tx: 0,      ty: 13 }, // W-mid
     { slot: 2, tx: 0,      ty: 20 }, // W-bot
     { slot: 3, tx: W - 1,  ty: 5  }, // E-top
     { slot: 4, tx: W - 1,  ty: 13 }, // E-mid
     { slot: 5, tx: W - 1,  ty: 20 }, // E-bot
-    { slot: 6, tx: 6,      ty: 0  }, // N-left — key path
-    { slot: 7, tx: 14,     ty: 0  }, // N-right — boss
+    { slot: 7, tx: 9,      ty: 0, span: 4 }, // N-center — boss (4 tiles wide)
   ];
   // Intro return door (south-center). One-way; scene does not create a zone.
   const introDoorX = 10;
   const introDoorY = H - 1;
 
   const doorSet = new Set<string>();
-  // Side-wall doors (slots 0-5, on x=0 and x=W-1) are 2 tiles tall.
-  // North-wall doors (slots 6-7, on y=0) are 2 tiles wide.
+  // Side-wall doors (y!=0 && y!=H-1) span vertically. North/south-wall
+  // doors (on y=0 or y=H-1) span horizontally. Span defaults to 2.
   for (const s of slots) {
-    doorSet.add(`${s.tx},${s.ty}`);
-    if (s.ty === 0 || s.ty === H - 1) {
-      doorSet.add(`${s.tx + 1},${s.ty}`);
-    } else {
-      doorSet.add(`${s.tx},${s.ty + 1}`);
+    const span = s.span ?? 2;
+    const horizontal = s.ty === 0 || s.ty === H - 1;
+    for (let i = 0; i < span; i++) {
+      const tx = horizontal ? s.tx + i : s.tx;
+      const ty = horizontal ? s.ty : s.ty + i;
+      doorSet.add(`${tx},${ty}`);
     }
   }
   // Intro return door is 2 tiles wide on the south wall.
@@ -1402,8 +1663,8 @@ export const HUB_ROOM: RoomTemplate = (() => {
   // a dirt-trail wang overlay on top of the dark_forest grass, leading
   // from the central rift-crystal spring out to every door slot.
   //
-  //        [slot 6]   [slot 7]
-  //     +-----T------T-----+
+  //             [slot 7]
+  //     +--------T---------+
   //     |     |      |     |
   //   [s0]----+      +---[s3]
   //     |          (plaza)  |
@@ -1440,12 +1701,12 @@ export const HUB_ROOM: RoomTemplate = (() => {
   mark(19, 5); mark(19, 6);
   mark(19, 13); mark(19, 14);
   mark(19, 20); mark(19, 21);
-  // North trunk: plaza -> north wall along x=11
-  for (let y = 1; y <= 10; y++) mark(11, y);
-  // North branches east and west along y=1 to reach slots 6 and 7
-  for (let x = 6; x <= 15; x++) mark(x, 1);
-  mark(6, 2); mark(7, 2); // widen slot-6 landing
-  mark(14, 2); mark(15, 2); // widen slot-7 landing
+  // North trunk: plaza -> wide boss door landing at x=9..12, y=0..1
+  for (let y = 1; y <= 10; y++) {
+    for (let x = 10; x <= 11; x++) mark(x, y);
+  }
+  // Widen the top landing to match the 4-tile boss door
+  for (let x = 9; x <= 12; x++) { mark(x, 1); mark(x, 2); }
   // South trunk: plaza -> intro return along x=11
   for (let y = 16; y <= 24; y++) mark(11, y);
   mark(10, 23); mark(10, 24); // widen the intro landing
@@ -1482,14 +1743,15 @@ export const HUB_ROOM: RoomTemplate = (() => {
     { sprite: 'glowing_mushroom', x: 17, y: 6  },
     { sprite: 'glowing_mushroom', x: 5,  y: 21 },
     { sprite: 'glowing_mushroom', x: 16, y: 21 },
-    // Rift-crystal shards ringing the spring at the plaza corners. Non-
-    // colliding so the player can walk onto any plaza tile to trigger heal.
-    { sprite: 'rift_crystal_shard',   x: 9,  y: 11 },
-    { sprite: 'rift_crystal_shard',   x: 13, y: 11 },
-    { sprite: 'rift_crystal_shard',   x: 9,  y: 15 },
-    { sprite: 'rift_crystal_shard',   x: 13, y: 15 },
-    { sprite: 'rift_crystal_cluster', x: 11, y: 11 },
-    { sprite: 'rift_crystal_cluster', x: 11, y: 15 },
+    // Rift-crystal shards ringing the spring at the plaza corners. Per-
+    // instance noCollide so the player can walk onto any plaza tile to
+    // trigger heal — elsewhere in the game these crystals DO collide.
+    { sprite: 'rift_crystal_shard',   x: 9,  y: 11, noCollide: true },
+    { sprite: 'rift_crystal_shard',   x: 13, y: 11, noCollide: true },
+    { sprite: 'rift_crystal_shard',   x: 9,  y: 15, noCollide: true },
+    { sprite: 'rift_crystal_shard',   x: 13, y: 15, noCollide: true },
+    { sprite: 'rift_crystal_cluster', x: 11, y: 11, noCollide: true },
+    { sprite: 'rift_crystal_cluster', x: 11, y: 15, noCollide: true },
   ];
 
   const base: RoomTemplate = {
@@ -1515,7 +1777,28 @@ export const HUB_ROOM: RoomTemplate = (() => {
 
 // Named test rooms — used by direct-load debug mode (?testRoom=<key>).
 // Add new entries here when you want a room to be directly loadable from a URL.
+// Dedicated grass-rendering debug room: a 6x6 dense block of tall_grass_dark
+// centered in a small empty arena, with the player spawned at the top-left of
+// the patch so a Playwright test can step through it cell-by-cell and screenshot
+// to validate the immersive split-sprite rendering.
+export const GRASS_TEST_ROOM: RoomTemplate = (() => {
+  const room: RoomTemplate = {
+    ...makeRoom('start', 'Grass Render Test'),
+    biome: 'dark_forest',
+  };
+  room.playerSpawn = { x: 12, y: 8 };
+  const decos: { sprite: string; x: number; y: number }[] = [];
+  for (let y = 9; y <= 14; y++) {
+    for (let x = 12; x <= 17; x++) {
+      decos.push({ sprite: 'tall_grass_dark', x, y });
+    }
+  }
+  room.decorations = decos;
+  return room;
+})();
+
 export const TEST_ROOMS: Record<string, RoomTemplate> = {
+  grass_test: GRASS_TEST_ROOM,
   dark_forest: DARK_FOREST_TEST_ROOM,
   plains: PLAINS_TEST_ROOM,
   dark_lava: LAVA_TEST_ROOM,
@@ -1529,6 +1812,7 @@ export const TEST_ROOMS: Record<string, RoomTemplate> = {
   sunbleached_arena: SUNBLEACHED_ARENA_ROOM,
   windbreak_ridge: WINDBREAK_RIDGE_ROOM,
   crystal_flats: CRYSTAL_FLATS_ROOM,
+  elite: ELITE_ROOM,
 };
 
 // All templates by type for dungeon generation

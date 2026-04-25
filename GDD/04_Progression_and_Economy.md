@@ -48,7 +48,51 @@ If all active riftlings are KO'd during combat:
 - **Tier 1:** The run ends. Return to the main menu. Start a new run.
 - **Tier 2:** [TODO: Decide if partial recovery is possible — e.g., benched riftlings auto-swap in, or a "last stand" mechanic]
 
-## 6. Post-Jam Meta-Progression (Tier 3 — Deferred)
+## 6. Combat Balancing
+
+Enemy stats are derived from the **same per-species templates and level-up curves** the player's riftlings use, then scaled by a per-archetype multiplier. There is no separate "enemy stat formula" — nerf/buff levers are all multiplicative on top of shared base stats.
+
+### Enemy Level Scaling
+
+Enemy level per room = `clamp(round(difficulty), partyFloor, partyFloor + 2)`, where:
+- `partyFloor` = floor of the party's average level (enemies never fall behind)
+- `difficulty` = `depthScale × typeBonus`
+  - `depthScale` = `1 + roomsCleared × 0.4` (rooms cleared so far in the run, excluding start)
+  - `typeBonus` = `{ combat: 1.0, recruit: 1.2, elite: 1.6, boss: 3.0 }`
+- Cap of `partyFloor + 2` prevents early terminals from overshooting the player by 4+ levels.
+- Individual elite/boss roster members can add a per-unit `levelBonus` (e.g. the final boss has `+2`).
+
+### Stat Multipliers (by enemy archetype)
+
+Configured at the top of `CombatManager.ts`:
+
+| Archetype | HP | Attack | Defense | Speed |
+|---|---|---|---|---|
+| Wild (swarm combat) | ×1.2 | ×0.3 | ×0.3 | ×0.7 |
+| Elite (trainer squads) | ×0.85 | ×0.85 | ×0.85 | ×1.0 |
+| Boss | ×0.85 | ×0.85 | ×0.85 | ×1.0 |
+
+Wild enemies are a swarm — many, fragile, low-damage. Elites/bosses are few and use a lighter, near-parity nerf so they remain meaningful without being spikes in a fresh run. Crit and evasion also get nerfs for wild enemies (×0.5 and ×0.3 respectively); elites keep full values.
+
+### Enemy Count Scaling
+
+Wild combat rooms use the template's authored `enemySpawns` plus `floor(roomsCleared × 0.8)` extra random-floor spawns — swarms grow as the run progresses. Elite/boss rooms ignore this and use their authored `eliteTeam` roster exactly.
+
+The **Level 1 intro zone** overrides with `introSpawnCount` to protect new players:
+- First intro combat: **1 enemy**
+- Second intro combat: **4 enemies**
+
+### Damage Formula
+
+Damage per hit = `max(1, floor(attacker.attack × 1.5) + variance)`, variance ∈ `[-2, +2]`. Ranged attacks (target > 40 px away) fire a projectile that applies the same damage on arrival. Role passives, status effects, and move-specific modifiers layer on top.
+
+### Tuning Workflow
+
+1. Playtest the first intro combat and first elite — those are the two onboarding pressure points.
+2. If the feel is off, prefer adjusting the multiplier constants (`WILD_*`, `ELITE_*`) over rewriting species base stats. Base stats are shared with the player's roster; changing them affects both sides.
+3. For targeted difficulty adjustments, tune `introSpawnCount`, per-unit `levelBonus`, or the `typeBonus` table rather than the global multipliers.
+
+## 7. Post-Jam Meta-Progression (Tier 3 — Deferred)
 
 The full meta-progression system is documented in the original [GDD.MD](../GDD.MD). Summary of deferred layers:
 

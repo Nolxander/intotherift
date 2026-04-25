@@ -11,7 +11,7 @@ const FONT = 'monospace';
 
 /** Left-edge positioning */
 const PANEL_X = 4;
-const PANEL_Y = 30;
+const PANEL_Y = 22;
 const ROW_H = 18;
 const ICON_SIZE = 12;
 const PANEL_W = 22;

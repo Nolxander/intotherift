@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { PartyRiftling, Move, MoveKind, Role, Stance, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, TYPE_COLORS, speciesScale, FormationOffset } from '../data/party';
+import { PartyRiftling, Move, MoveKind, Role, Stance, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, getActiveRoleSynergies, TYPE_COLORS, speciesScale, FormationOffset } from '../data/party';
 import { EliteTeamMember } from '../data/room_templates';
 import { TrinketInventory, getEquippedBuffs, getRoleBuffs } from '../data/trinkets';
 import {
@@ -26,9 +26,14 @@ const SEPARATION_FORCE = 60;
  * Difficulty scaling — tune these to adjust combat feel.
  * Wild riftlings use their template stats multiplied by these factors.
  */
-const WILD_HP_MULT = 1.2;
+const WILD_HP_MULT = 0.95;
 const WILD_ATK_MULT = 0.3;
 const WILD_SPEED_MULT = 0.7;
+const ELITE_HP_MULT = 0.70;
+const ELITE_ATK_MULT = 0.75;
+
+const BOSS_HP_MULT = 1.1;
+const BOSS_ATK_MULT = 0.55;
 
 /** Multiplier to convert move.cooldown value to milliseconds. */
 const MOVE_CD_SCALE = 200;
@@ -251,6 +256,7 @@ export class CombatManager {
   private _selectedAllyIndex = 0;
   private _xpEarned = 0;
   private regenTimer?: Phaser.Time.TimerEvent;
+  private roleRegenTimer?: Phaser.Time.TimerEvent;
   private supportAuraTimer?: Phaser.Time.TimerEvent;
 
   /** Pre-combat positioning phase state. */
@@ -259,6 +265,7 @@ export class CombatManager {
   private formationTargets: { x: number; y: number }[] = [];
   private enemyFormationTargets: { x: number; y: number }[] = [];
 
+  private entrySide: 'north' | 'south' | 'east' | 'west' = 'south';
   /** Entry-local basis for converting between world pixels and formation offsets. */
   private entryBasis: {
     anchorX: number;
@@ -278,6 +285,10 @@ export class CombatManager {
 
   /** Prep-phase banner — destroyed in beginCombat. */
   private setupBanner?: Phaser.GameObjects.Text;
+
+  /** When true, the setup phase pauses with a tutorial overlay until clicked. */
+  private setupTutorialPending = false;
+  private setupTutorialOverlay?: Phaser.GameObjects.Container;
 
   // --- Player command state ---
 
@@ -305,6 +316,11 @@ export class CombatManager {
   /** Last sampled position for stuck-detection. */
   private unitLastPos = new Map<CombatUnit, NavPoint>();
   private unitLastPosTime = new Map<CombatUnit, number>();
+
+  // --- Boss encounter state ---
+  private bossUnit: CombatUnit | null = null;
+  private bossPhase = 1;
+  private cachedEnemyLevel = 1;
 
   constructor(scene: Phaser.Scene, walls: Phaser.Physics.Arcade.StaticGroup) {
     this.scene = scene;
@@ -357,10 +373,12 @@ export class CombatManager {
      * to handle the run-ending game-over flow (restart, recap, etc.).
      */
     onPartyWiped?: () => void,
+    showSetupTutorial = false,
   ): void {
     const pool = (wildSpeciesPool && wildSpeciesPool.length > 0) ? wildSpeciesPool : AVAILABLE_RIFTLINGS;
     this.roomPixelW = roomPixelW;
     this.roomPixelH = roomPixelH;
+    this.entrySide = entrySide;
     this.entryBasis = this.computeEntryBasis(entrySide, roomPixelW, roomPixelH);
     this.onFormationSaved = onFormationSaved;
     this.draggingIndex = null;
@@ -457,6 +475,42 @@ export class CombatManager {
             for (const ally of this.allies) {
               if (ally.alive && ally.elementType === 'nature') {
                 ally.hp = Math.min(ally.maxHp, ally.hp + 2);
+              }
+            }
+          },
+        });
+      }
+    }
+
+    // Apply role (class) synergy buffs to matching allies
+    const roleSynergies = getActiveRoleSynergies(companions.map((c) => c.data));
+    for (const { synergy } of roleSynergies) {
+      for (const ally of this.allies) {
+        if (ally.role !== synergy.role) continue;
+        if (synergy.buffs.attack) ally.attack += synergy.buffs.attack;
+        if (synergy.buffs.defense) ally.defense += synergy.buffs.defense;
+        if (synergy.buffs.critRate) ally.critRate += synergy.buffs.critRate;
+        if (synergy.buffs.evasion) ally.evasion += synergy.buffs.evasion;
+        if (synergy.buffs.speed) ally.speed += synergy.buffs.speed;
+        if (synergy.buffs.hp) {
+          ally.maxHp += synergy.buffs.hp;
+          ally.hp += synergy.buffs.hp;
+        }
+        if (synergy.attackSpeedMult) {
+          ally.attackCooldown = Math.max(400, Math.round(ally.attackCooldown * synergy.attackSpeedMult));
+        }
+      }
+
+      // Support regen: heal matching allies 1 HP/s during combat
+      if (synergy.special === 'regen') {
+        this.roleRegenTimer = this.scene.time.addEvent({
+          delay: 1000,
+          loop: true,
+          callback: () => {
+            if (!this.active) return;
+            for (const ally of this.allies) {
+              if (ally.alive && ally.role === synergy.role) {
+                ally.hp = Math.min(ally.maxHp, ally.hp + 1);
               }
             }
           },
@@ -578,10 +632,12 @@ export class CombatManager {
       sprite.body!.setSize(20, 20);
       this.scene.physics.add.collider(sprite, this.walls);
 
-      // Elite members keep full player-style stats; wild enemies use the swarm nerfs.
-      const maxHp = isElite ? riftling.maxHp : Math.floor(riftling.maxHp * WILD_HP_MULT);
-      const atk = isElite ? riftling.attack : Math.floor(riftling.attack * WILD_ATK_MULT);
-      const def = isElite ? riftling.defense : Math.floor(riftling.defense * WILD_ATK_MULT);
+      // Boss gets its own scaling — beefy HP, toned-down damage so the fight lasts.
+      // Elite members get a lighter nerf than wild enemies; wild enemies use the swarm nerfs.
+      const isBoss = riftlingKey === 'rift_tyrant';
+      const maxHp = isBoss ? Math.floor(riftling.maxHp * BOSS_HP_MULT) : isElite ? Math.floor(riftling.maxHp * ELITE_HP_MULT) : Math.floor(riftling.maxHp * WILD_HP_MULT);
+      const atk = isBoss ? Math.floor(riftling.attack * BOSS_ATK_MULT) : isElite ? Math.floor(riftling.attack * ELITE_ATK_MULT) : Math.floor(riftling.attack * WILD_ATK_MULT);
+      const def = isBoss ? Math.floor(riftling.defense * BOSS_ATK_MULT) : isElite ? Math.floor(riftling.defense * ELITE_ATK_MULT) : Math.floor(riftling.defense * WILD_ATK_MULT);
       const spd = isElite ? riftling.speed : Math.floor(riftling.speed * WILD_SPEED_MULT);
       const crit = isElite ? riftling.critRate : Math.floor(riftling.critRate * 0.5);
       const eva = isElite ? riftling.evasion : Math.floor(riftling.evasion * 0.3);
@@ -636,6 +692,11 @@ export class CombatManager {
       this.enemies.push(enemy);
     }
 
+    // Tag boss unit if this is a boss encounter
+    this.bossUnit = this.enemies.find(e => e.riftlingKey === 'rift_tyrant') ?? null;
+    this.bossPhase = 1;
+    this.cachedEnemyLevel = enemyLevel;
+
     this.enemyFormationTargets = formationPositions;
 
     // Apply saved ally formation now that enemy slots are known — per-slot
@@ -662,10 +723,27 @@ export class CombatManager {
 
     this.faceUnitsForSetup();
     this.createSetupBanner();
+
+    if (showSetupTutorial) {
+      this.setupTutorialPending = true;
+      this.showSetupTutorial();
+    }
   }
 
   /** Point each unit at the nearest opponent so the prep phase reads correctly. */
   private faceUnitsForSetup(): void {
+    const oppositeOfEntry: Record<'north' | 'south' | 'east' | 'west', string> = {
+      south: 'north',
+      north: 'south',
+      east: 'west',
+      west: 'east',
+    };
+    const allyDir = oppositeOfEntry[this.entrySide];
+    for (const ally of this.allies) {
+      if (!ally.alive) continue;
+      this.unitLastDir.set(ally, allyDir);
+      stopWalkAnim(ally.sprite, ally.texturePrefix, allyDir);
+    }
     const face = (unit: CombatUnit, pool: CombatUnit[]) => {
       const target = this.nearestLiving(unit, pool);
       if (!target) return;
@@ -676,7 +754,6 @@ export class CombatManager {
       this.unitLastDir.set(unit, dir);
       stopWalkAnim(unit.sprite, unit.texturePrefix, dir);
     };
-    for (const ally of this.allies) if (ally.alive) face(ally, this.enemies);
     for (const enemy of this.enemies) if (enemy.alive) face(enemy, this.allies);
   }
 
@@ -730,6 +807,67 @@ export class CombatManager {
       this.setupBanner.destroy();
       this.setupBanner = undefined;
     }
+    this.destroySetupTutorial();
+  }
+
+  private showSetupTutorial(): void {
+    const cam = this.scene.cameras.main;
+    const cx = cam.width / 2;
+    const cy = cam.height / 2;
+
+    const container = this.scene.add.container(0, 0).setDepth(650).setScrollFactor(0);
+
+    const bg = this.scene.add.graphics();
+    bg.fillStyle(0x000000, 0.6);
+    bg.fillRoundedRect(cx - 110, cy - 30, 220, 60, 6);
+    container.add(bg);
+
+    const text = this.scene.add
+      .text(cx, cy - 8, 'Drag riftlings to reposition!', {
+        fontFamily: 'monospace',
+        fontSize: '11px',
+        color: '#ffe680',
+        stroke: '#000000',
+        strokeThickness: 2,
+        align: 'center',
+      })
+      .setOrigin(0.5, 0.5);
+    container.add(text);
+
+    const hint = this.scene.add
+      .text(cx, cy + 12, 'click to continue', {
+        fontFamily: 'monospace',
+        fontSize: '9px',
+        color: '#aaaaaa',
+      })
+      .setOrigin(0.5, 0.5);
+    container.add(hint);
+
+    this.scene.tweens.add({
+      targets: hint,
+      alpha: { from: 1, to: 0.4 },
+      duration: 600,
+      yoyo: true,
+      repeat: -1,
+    });
+
+    this.setupTutorialOverlay = container;
+
+    const dismiss = () => {
+      this.scene.input.off('pointerdown', dismiss);
+      this.destroySetupTutorial();
+      this.setupStartTime = this.scene.time.now;
+    };
+    this.scene.input.on('pointerdown', dismiss);
+  }
+
+  private destroySetupTutorial(): void {
+    this.setupTutorialPending = false;
+    if (this.setupTutorialOverlay) {
+      this.scene.tweens.killTweensOf(this.setupTutorialOverlay);
+      this.setupTutorialOverlay.destroy(true);
+      this.setupTutorialOverlay = undefined;
+    }
   }
 
   // --- Entry-local space helpers ---
@@ -773,13 +911,15 @@ export class CombatManager {
 
   /**
    * A formation slot is valid when it is inside the room bounds, sits on a
-   * walkable nav tile, and doesn't overlap any enemy's spawn position.
+   * walkable nav tile, lies on the player's half of the field (relative to
+   * the entry side), and doesn't overlap any enemy's spawn position.
    */
   private isFormationSlotValid(x: number, y: number): boolean {
     const margin = 16;
     if (x < margin || y < margin || x > this.roomPixelW - margin || y > this.roomPixelH - margin) {
       return false;
     }
+    if (!this.isOnPlayerSide(x, y)) return false;
     if (this.nav && !this.nav.isWalkableAt(x, y)) return false;
     for (const t of this.enemyFormationTargets) {
       const dx = t.x - x;
@@ -787,6 +927,20 @@ export class CombatManager {
       if (dx * dx + dy * dy < 20 * 20) return false;
     }
     return true;
+  }
+
+  /**
+   * True when (x,y) is on the player's half of the room — i.e. the forward
+   * projection from the entry anchor is at most half the room's extent along
+   * the forward axis. `forward` grows from 0 at the entry wall toward the
+   * opposite wall, so the midline is at extent/2.
+   */
+  private isOnPlayerSide(x: number, y: number): boolean {
+    if (!this.entryBasis) return true;
+    const b = this.entryBasis;
+    const forward = (x - b.anchorX) * b.forwardX + (y - b.anchorY) * b.forwardY;
+    const extent = Math.abs(b.forwardX) * this.roomPixelW + Math.abs(b.forwardY) * this.roomPixelH;
+    return forward <= extent / 2;
   }
 
   get isActive(): boolean {
@@ -834,6 +988,16 @@ export class CombatManager {
     this.tickBlind(time);
     this.tickBriarExpiry(time);
     this.tickHuntersMark(time);
+
+    // Boss phase tracking
+    if (this.bossUnit?.alive) {
+      const hpPct = this.bossUnit.hp / this.bossUnit.maxHp;
+      if (this.bossPhase === 1 && hpPct <= 0.7) {
+        this.enterBossPhase(2);
+      } else if (this.bossPhase === 2 && hpPct <= 0.35) {
+        this.enterBossPhase(3);
+      }
+    }
 
     for (const enemy of this.enemies) {
       if (!enemy.alive) continue;
@@ -979,9 +1143,11 @@ export class CombatManager {
         stopWalkAnim(enemy.sprite, enemy.texturePrefix, faceDir);
       }
       enemy.sprite.setVelocity(sep.vx, sep.vy);
-      // Elite enemies with equipped moves use the same move-selection pipeline as
-      // allies; wild enemies fall through to the basic auto-attack.
-      if (enemy.moveSlots && enemy.moveSlots.length > 0) {
+      // Boss uses phased move cycling; other elites use the standard move pipeline;
+      // wild enemies fall through to the basic auto-attack.
+      if (enemy === this.bossUnit && enemy.moveSlots && enemy.moveSlots.length > 0) {
+        this.tryBossMove(enemy, target, time);
+      } else if (enemy.moveSlots && enemy.moveSlots.length > 0) {
         this.tryUseMove(enemy, target, time);
       } else if (time - enemy.lastAttackTime > enemy.attackCooldown) {
         enemy.lastAttackTime = time;
@@ -1288,15 +1454,35 @@ export class CombatManager {
       this.unitLastDir.set(comp, dir);
       playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
     } else if (shouldKite) {
-      // Kiting backstep — walk directly away from the crowding enemy at reduced speed
+      // Kiting backstep — walk directly away from the crowding enemy at reduced
+      // speed. Abort if the backstep would push us into a wall/void so backliners
+      // don't grind themselves into geometry.
       const len = Math.max(1, Math.sqrt(kiteFromX * kiteFromX + kiteFromY * kiteFromY));
-      const backX = -(kiteFromX / len) * moveSpeed * KITE_BACKSTEP_MULT;
-      const backY = -(kiteFromY / len) * moveSpeed * KITE_BACKSTEP_MULT;
-      comp.sprite.setVelocity(backX + sep.vx, backY + sep.vy);
-      const dir = this.getDirection(backX, backY);
-      this.unitLastDir.set(comp, dir);
-      playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
-      // Still attack while kiting
+      const nxBack = -(kiteFromX / len);
+      const nyBack = -(kiteFromY / len);
+      const KITE_LOOKAHEAD = 20;
+      const probeX = comp.sprite.x + nxBack * KITE_LOOKAHEAD;
+      const probeY = comp.sprite.y + nyBack * KITE_LOOKAHEAD;
+      const canBackstep = !this.nav || this.nav.isWalkableAt(probeX, probeY);
+      if (canBackstep) {
+        const backX = nxBack * moveSpeed * KITE_BACKSTEP_MULT;
+        const backY = nyBack * moveSpeed * KITE_BACKSTEP_MULT;
+        comp.sprite.setVelocity(backX + sep.vx, backY + sep.vy);
+        const dir = this.getDirection(backX, backY);
+        this.unitLastDir.set(comp, dir);
+        playWalkOrStatic(comp.sprite, comp.texturePrefix, dir, this.scene.anims);
+      } else {
+        // Cornered — hold position, face target, keep firing.
+        const tdx = target.sprite.x - comp.sprite.x;
+        const tdy = target.sprite.y - comp.sprite.y;
+        const faceDir = this.getDirection(tdx, tdy);
+        this.unitLastDir.set(comp, faceDir);
+        if (!isPlayingAttackAnim(comp.sprite, comp.texturePrefix)) {
+          stopWalkAnim(comp.sprite, comp.texturePrefix, faceDir);
+        }
+        comp.sprite.setVelocity(sep.vx, sep.vy);
+      }
+      // Still attack while kiting (or cornered)
       if (comp.moveSlots && comp.moveSlots.length > 0) {
         this.tryUseMove(comp, target, time);
       } else if (time - comp.lastAttackTime > comp.attackCooldown) {
@@ -1446,7 +1632,7 @@ export class CombatManager {
 
   private dealDamage(attacker: CombatUnit, defender: CombatUnit): void {
     const variance = Math.floor(Math.random() * 4) - 2;
-    const damage = Math.max(1, attacker.attack + variance);
+    const damage = Math.max(1, Math.floor(attacker.attack * 1.5) + variance);
     const isAllyAttacker = this.allies.includes(attacker);
     const label = `-${damage}`;
 
@@ -1515,22 +1701,39 @@ export class CombatManager {
   }
 
   private checkCombatEnd(): void {
-    const aliveEnemies = this.enemies.filter((e) => e.alive);
-
-    if (aliveEnemies.length === 0) {
+    // Boss kill: wipe remaining minions and end immediately
+    if (this.bossUnit && !this.bossUnit.alive) {
+      for (const e of this.enemies) {
+        if (e.alive && e !== this.bossUnit) {
+          this.killUnit(e);
+        }
+      }
       this.active = false;
       this.cleanupCommandState();
+      this.bossUnit = null;
       for (const ally of this.allies) ally.hpBar.clear();
       this.onRoomCleared?.(this.defeated);
       return;
     }
 
-    const aliveAllies = this.allies.filter((a) => a.alive);
+    // Resolve wipe before room-clear so a simultaneous last-ally / last-enemy
+    // death ends the run rather than marking the room cleared. `hp <= 0` is
+    // a defensive fallback in case any damage path forgot to flip `alive`.
+    const aliveAllies = this.allies.filter((a) => a.alive && a.hp > 0);
     if (aliveAllies.length === 0) {
       this.active = false;
       this.cleanupCommandState();
       for (const ally of this.allies) ally.hpBar.clear();
       this.onPartyWiped?.();
+      return;
+    }
+
+    const aliveEnemies = this.enemies.filter((e) => e.alive);
+    if (aliveEnemies.length === 0) {
+      this.active = false;
+      this.cleanupCommandState();
+      for (const ally of this.allies) ally.hpBar.clear();
+      this.onRoomCleared?.(this.defeated);
     }
   }
 
@@ -1539,6 +1742,65 @@ export class CombatManager {
     this.focusRing?.destroy();
     this.focusRing = undefined;
   }
+
+  // --- Boss Phase System ---
+
+  private enterBossPhase(phase: number): void {
+    this.bossPhase = phase;
+    const boss = this.bossUnit!;
+    if (phase === 2) {
+      boss.speed = Math.floor(boss.speed * 1.15);
+      boss.attackCooldown = Math.floor(boss.attackCooldown * 0.85);
+      boss.sprite.setTint(0xff6644);
+      this.showFloatingText(boss.sprite.x, boss.sprite.y - 20, 'ENRAGED!', '#ff6644', 14);
+    } else if (phase === 3) {
+      boss.speed = Math.floor(boss.speed * 1.15);
+      boss.attackCooldown = Math.floor(boss.attackCooldown * 0.85);
+      boss.sprite.setTint(0xff2222);
+      this.showFloatingText(boss.sprite.x, boss.sprite.y - 20, 'DESPERATE!', '#ff2222', 14);
+    }
+  }
+
+  /**
+   * Boss move selection — cycles through available moves with phase gating.
+   * Phase 1: only move 0 (Rift Slam). Phase 2: moves 0+1 (+ Rift Charge).
+   * Phase 3: all 3 moves (+ Void Drain for self-sustain).
+   * Picks the next move in rotation that's off cooldown; slight intelligence:
+   * Void Drain is preferred when boss HP is below 50%.
+   */
+  private tryBossMove(boss: CombatUnit, nearestEnemy: CombatUnit, time: number): void {
+    const slots = boss.moveSlots!;
+    const maxSlot = this.bossPhase === 1 ? 1 : this.bossPhase === 2 ? 2 : slots.length;
+
+    // Prefer Void Drain (slot 2) when below 50% HP and it's unlocked + off CD
+    if (maxSlot >= 3 && boss.hp < boss.maxHp * 0.5) {
+      const drainSlot = slots[2];
+      if (drainSlot && time - drainSlot.lastUsedTime >= drainSlot.cooldownMs) {
+        const target = this.pickMoveTarget(boss, drainSlot, nearestEnemy, time);
+        if (target) {
+          drainSlot.lastUsedTime = time;
+          boss.lastMoveIndex = 2;
+          this.dealMoveDamage(boss, target, drainSlot);
+          return;
+        }
+      }
+    }
+
+    // Cycle through available moves starting after the last one used
+    const start = (boss.lastMoveIndex + 1) % maxSlot;
+    for (let n = 0; n < maxSlot; n++) {
+      const i = (start + n) % maxSlot;
+      const slot = slots[i];
+      if (time - slot.lastUsedTime < slot.cooldownMs) continue;
+      const target = this.pickMoveTarget(boss, slot, nearestEnemy, time);
+      if (!target) continue;
+      slot.lastUsedTime = time;
+      boss.lastMoveIndex = i;
+      this.dealMoveDamage(boss, target, slot);
+      return;
+    }
+  }
+
 
   // --- Status Effect System ---
 
@@ -1712,15 +1974,17 @@ export class CombatManager {
 
     const enemies = isAlly ? this.enemies : this.allies;
 
-    // Beam visual — bright yellow-white line that fades over the duration
+    // Beam visual — elemental-colored line that fades over the duration
     const beamGfx = this.scene.add.graphics().setDepth(245);
     const totalDuration = CombatManager.BEAM_TICKS * CombatManager.BEAM_TICK_MS;
+    const glowColor = TYPE_COLORS[attacker.elementType] ?? 0xffffcc;
+    const coreColor = attacker.elementType === 'light' ? 0xffffff : 0xffeecc;
 
     const drawBeam = (alpha: number) => {
       beamGfx.clear();
-      beamGfx.lineStyle(8, 0xffffcc, alpha * 0.4);
+      beamGfx.lineStyle(8, glowColor, alpha * 0.4);
       beamGfx.beginPath(); beamGfx.moveTo(sx, sy); beamGfx.lineTo(ex, ey); beamGfx.strokePath();
-      beamGfx.lineStyle(3, 0xffffff, alpha);
+      beamGfx.lineStyle(3, coreColor, alpha);
       beamGfx.beginPath(); beamGfx.moveTo(sx, sy); beamGfx.lineTo(ex, ey); beamGfx.strokePath();
     };
     drawBeam(1);
@@ -2217,7 +2481,12 @@ export class CombatManager {
 
     // Play attack animation immediately — effect fires after attackAnimDelay (or instantly)
     if (slot.attackAnim) {
-      const dir = this.unitLastDir.get(attacker) ?? 'south';
+      // Rift Tyrant only has south-facing attack anims for now
+      const dir = attacker.texturePrefix === 'rift_tyrant' ? 'south' : (this.unitLastDir.get(attacker) ?? 'south');
+      if (attacker.texturePrefix === 'rift_tyrant') {
+        this.unitLastDir.set(attacker, 'south');
+        attacker.sprite.setTexture('rift_tyrant_south');
+      }
       playAttackAnim(attacker.sprite, attacker.texturePrefix, slot.attackAnim, dir, this.scene.anims, () => {
         if (attacker.alive) stopWalkAnim(attacker.sprite, attacker.texturePrefix, this.unitLastDir.get(attacker) ?? 'south');
       });
@@ -2787,6 +3056,9 @@ export class CombatManager {
 
   /** Shared hit application: evasion check, defense reduction, crit, flash, knockback, damage number, kill check. */
   private applyHit(attacker: CombatUnit, defender: CombatUnit, baseDamage: number, isAllyAttacker: boolean, label: string, pierce = false): void {
+    // Skip if either unit is dead — sprite body may already be destroyed
+    if (!defender.alive || !attacker.alive) return;
+
     // Phase immunity — defender cannot be hit while phasing
     if (this.scene.time.now < defender.phaseUntil) return;
 
@@ -3215,6 +3487,12 @@ export class CombatManager {
 
     this.drawDragGhost();
 
+    if (this.setupTutorialPending) {
+      this.setupStartTime = time;
+      this.updateSetupBanner(SETUP_TIMEOUT_MS);
+      return;
+    }
+
     if (this.draggingIndex !== null) {
       // Hold the clock while the player is mid-drag.
       this.setupStartTime = time - Math.min(time - this.setupStartTime, SETUP_TIMEOUT_MS - 1);
@@ -3527,6 +3805,10 @@ export class CombatManager {
     if (this.regenTimer) {
       this.regenTimer.destroy();
       this.regenTimer = undefined;
+    }
+    if (this.roleRegenTimer) {
+      this.roleRegenTimer.destroy();
+      this.roleRegenTimer = undefined;
     }
     if (this.supportAuraTimer) {
       this.supportAuraTimer.destroy();

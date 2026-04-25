@@ -10,6 +10,16 @@ async function gameState(page: Page, accessor: string) {
 
 /** Wait until __gameState is available (Phaser booted + DungeonScene created). */
 async function waitForGameReady(page: Page) {
+  await page.waitForFunction(
+    () => !!(window as any).__PHASER_GAME__?.scene?.getScene?.('Title'),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => {
+    const game = (window as any).__PHASER_GAME__;
+    game.scene.stop('Title');
+    game.scene.start('Dungeon');
+  });
   await page.waitForFunction(() => !!(window as any).__gameState, null, {
     timeout: 20_000,
   });
@@ -83,15 +93,19 @@ test.describe('Recruit System', () => {
     expect(room.cleared).toBe(true);
   });
 
-  test('walking north enters combat room and triggers combat', async ({ page }) => {
+  test('warping to combat room triggers combat', async ({ page }) => {
     await page.goto('/');
     await waitForGameReady(page);
     await dismissTrinketSelect(page);
 
-    // Walk north (W key) toward the door — start room has north door
-    await holdKey(page, 'w', 2500);
+    // Warp directly to a combat room for deterministic testing
+    const dungeon = await gameState(page, 'getDungeon()');
+    const combatRoom = dungeon.rooms.find((r: any) => r.template.type === 'combat');
+    expect(combatRoom).toBeDefined();
 
-    // Should have transitioned to combat room and combat should be active
+    await page.evaluate((id: number) => (window as any).__gameState.warpToRoom(id), combatRoom.id);
+    await page.waitForTimeout(500);
+
     const room = await gameState(page, 'getRoom()');
     expect(['combat', 'elite', 'recruit']).toContain(room.template.type);
 

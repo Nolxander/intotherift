@@ -757,6 +757,21 @@
       "sprite": "glowing_mushroom",
       "x": 1,
       "y": 8
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 28,
+      "y": 1
+    },
+    {
+      "sprite": "badlands_rock_cluster",
+      "x": 27,
+      "y": 1
+    },
+    {
+      "sprite": "rift_crystal_cluster",
+      "x": 26,
+      "y": 1
     }
   ]
 }

@@ -9,21 +9,6 @@ const PANEL_Y = 293;
 const PANEL_W = 160;
 const PANEL_H = 24;
 
-const CMD_PANEL_X = 160;
-const CMD_PANEL_Y = 272;
-const CMD_PANEL_W = 160;
-const CMD_PANEL_H = 17;
-
-/**
- * Stance command entries shown on the combat HUD. Order = key binding.
- * Hold and Group still exist in CombatManager but are intentionally not
- * surfaced here — drag-and-drop setup covers their use cases.
- */
-const STANCES: ReadonlyArray<{ key: string; stance: 'push' | 'hold' | 'withdraw' | 'group'; label: string }> = [
-  { key: '1', stance: 'push',     label: 'Push' },
-  { key: '2', stance: 'withdraw', label: 'Withdraw' },
-];
-
 /**
  * Move HUD — always-visible panel showing the selected riftling's equipped moves.
  *
@@ -37,7 +22,6 @@ export class CombatHUD {
   private container: Phaser.GameObjects.Container;
   private gfx: Phaser.GameObjects.Graphics;
   private moveTexts: Phaser.GameObjects.Text[] = [];
-  private stanceTexts: Phaser.GameObjects.Text[] = [];
 
   /** External party data reference for out-of-combat display. */
   private partyRef: () => { active: PartyRiftling[]; selectedIndex: number };
@@ -61,11 +45,6 @@ export class CombatHUD {
       this.moveTexts.push(t);
     }
 
-    // Stance command labels (above move slots) — one text per stance entry
-    for (let i = 0; i < STANCES.length; i++) {
-      this.stanceTexts.push(this.addText(0, 0, '', 7, '#888888'));
-    }
-
     this.container.setVisible(true);
   }
 
@@ -80,37 +59,6 @@ export class CombatHUD {
     const { active, selectedIndex } = this.partyRef();
     const riftling = active[selectedIndex];
     const inCombat = this.combat?.isActive ?? false;
-
-    // Draw stance command legend during combat — highlights the active stance
-    // on the selected ally. All four commands are always visible so the player
-    // doesn't have to remember which number is which.
-    if (inCombat && this.combat) {
-      this.gfx.fillStyle(0x0a0a1a, 0.75);
-      this.gfx.fillRoundedRect(CMD_PANEL_X, CMD_PANEL_Y, CMD_PANEL_W, CMD_PANEL_H, 2);
-
-      const current = this.combat.getStanceForIndex(selectedIndex);
-      const slotW = Math.floor(CMD_PANEL_W / STANCES.length);
-      for (let i = 0; i < STANCES.length; i++) {
-        const entry = STANCES[i];
-        const isActive = entry.stance === current;
-        const slotX = CMD_PANEL_X + i * slotW;
-
-        if (isActive) {
-          this.gfx.fillStyle(0xffcc44, 0.22);
-          this.gfx.fillRect(slotX + 1, CMD_PANEL_Y + 1, slotW - 2, CMD_PANEL_H - 2);
-        }
-
-        const t = this.stanceTexts[i];
-        t.setText(`${entry.key} ${entry.label}`);
-        t.setColor(isActive ? '#ffdd66' : '#aaaaaa');
-        // "Withdraw" is longer than its slot — nudge it left so it doesn't
-        // overflow into the "Group" slot.
-        const textOffsetX = entry.stance === 'withdraw' ? -6 : 4;
-        t.setPosition(slotX + textOffsetX, CMD_PANEL_Y + 5);
-      }
-    } else {
-      for (const t of this.stanceTexts) t.setText('');
-    }
 
     if (!riftling) {
       for (const t of this.moveTexts) t.setText('');

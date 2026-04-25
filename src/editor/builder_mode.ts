@@ -47,6 +47,13 @@ import { getRoomKey } from '../data/room_templates';
 
 const TILE = 16;
 
+const ALL_BIOMES: Biome[] = [
+  'dungeon', 'grass_cliff', 'grass_water',
+  'dark_grass_cliff', 'dark_grass_water', 'dark_forest',
+  'dark_plains_bluff', 'dark_lava', 'dark_badlands',
+  'dark_jungle', 'dark_void',
+];
+
 // ─── Overlay canvas management ────────────────────────────────────────
 
 let overlayCanvas: HTMLCanvasElement | null = null;
@@ -266,6 +273,46 @@ export const updateBuilder = coreUpdate;
 
 let sceneRef: DungeonScene | null = null;
 
+// ─── Biome selector dropdown ─────────────────────────────────────────
+
+let biomeSelect: HTMLSelectElement | null = null;
+
+function ensureBiomeSelector(): HTMLSelectElement {
+  if (biomeSelect) return biomeSelect;
+
+  const sel = document.createElement('select');
+  sel.id = 'itr-biome-selector';
+  for (const b of ALL_BIOMES) {
+    const opt = document.createElement('option');
+    opt.value = b;
+    opt.textContent = b.replace(/_/g, ' ');
+    sel.appendChild(opt);
+  }
+  sel.style.cssText = `
+    position: fixed; top: 8px; right: 8px; z-index: 1000;
+    padding: 4px 8px; font-family: monospace; font-size: 13px;
+    background: #1a1a2e; color: #e0e0e0; border: 1px solid #444;
+    border-radius: 4px; display: none;
+  `;
+  sel.addEventListener('change', () => {
+    if (!sceneRef) return;
+    const tmpl = sceneRef.getCurrentTemplate();
+    tmpl.biome = sel.value as Biome;
+    cachedTemplate = null;
+    sceneRef.rebuildAllTiles();
+  });
+  document.body.appendChild(sel);
+  biomeSelect = sel;
+  return sel;
+}
+
+function syncBiomeSelector(): void {
+  const sel = ensureBiomeSelector();
+  if (!sceneRef) return;
+  const tmpl = sceneRef.getCurrentTemplate();
+  sel.value = tmpl.biome || 'dungeon';
+}
+
 /**
  * Initialize the builder. Must be called once the DungeonScene is running
  * (so Phaser's canvas exists and the current room is loaded).
@@ -404,6 +451,9 @@ export function toggleBuilder(): void {
     overlayCanvas.style.pointerEvents = active ? 'auto' : 'none';
     if (active) syncOverlayPosition();
   }
+  const sel = ensureBiomeSelector();
+  sel.style.display = active ? 'block' : 'none';
+  if (active) syncBiomeSelector();
 }
 
 /**

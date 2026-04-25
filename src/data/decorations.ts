@@ -46,6 +46,14 @@ export interface DecorationDef {
   /** Collision body height in game pixels (only used when collides=true). */
   collisionHeight?: number;
   /**
+   * Where on the sprite to anchor the collision body vertically:
+   *   'base'   — bottom of the sprite (good for trees: body at trunk)
+   *   'center' — visual center of the sprite (good for rocks, crystals,
+   *              logs — things whose visible body fills the whole sprite)
+   * Defaults to 'base' to preserve existing tree behavior.
+   */
+  collisionAnchor?: 'base' | 'center';
+  /**
    * Optional vertical shift in game pixels applied to the sprite's render
    * position (positive = down). Used for "immersive" props like tall grass
    * so their bottom aligns with a character's visual feet rather than the
@@ -83,6 +91,7 @@ const DECORATION_OVERRIDES: Record<string, Omit<DecorationDef, 'key' | 'path'>> 
     collides: true,
     collisionWidth: 28,
     collisionHeight: 10,
+    collisionAnchor: 'center',
   },
   glowing_mushroom: {
     displaySize: 32,
@@ -94,6 +103,10 @@ const DECORATION_OVERRIDES: Record<string, Omit<DecorationDef, 'key' | 'path'>> 
   },
   stepping_stone: {
     displaySize: 16,
+    collides: false,
+  },
+  rift_stairs_down: {
+    displaySize: 48,
     collides: false,
   },
   tall_grass_dark: {
@@ -115,12 +128,14 @@ const DECORATION_OVERRIDES: Record<string, Omit<DecorationDef, 'key' | 'path'>> 
     collides: true,
     collisionWidth: 14,
     collisionHeight: 6,
+    collisionAnchor: 'center',
   },
   badlands_cracked_boulder: {
     displaySize: 40,
     collides: true,
     collisionWidth: 20,
     collisionHeight: 8,
+    collisionAnchor: 'center',
   },
   giant_fern: {
     displaySize: 36,
@@ -128,23 +143,38 @@ const DECORATION_OVERRIDES: Record<string, Omit<DecorationDef, 'key' | 'path'>> 
   },
   rift_crystal_cluster: {
     displaySize: 24,
-    collides: false,
+    collides: true,
+    collisionWidth: 12,
+    collisionHeight: 5,
+    collisionAnchor: 'center',
   },
   rift_crystal_shard: {
     displaySize: 28,
-    collides: false,
+    collides: true,
+    collisionWidth: 12,
+    collisionHeight: 5,
+    collisionAnchor: 'center',
   },
   rift_crystal_formation: {
     displaySize: 40,
     collides: true,
     collisionWidth: 16,
     collisionHeight: 6,
+    collisionAnchor: 'center',
   },
   rift_crystal_outcrop: {
     displaySize: 32,
     collides: true,
     collisionWidth: 14,
     collisionHeight: 6,
+    collisionAnchor: 'center',
+  },
+  // Boss arena: a single 16x16 lava tile rendered as a flat ground decal.
+  // Walkable (combat units must be able to traverse the arena), but the
+  // glow paints the floor with the Elite's signature corruption.
+  lava_pool: {
+    displaySize: 18,
+    collides: false,
   },
 };
 

@@ -4,15 +4,16 @@ import {
   generateTestDungeon,
   Dungeon,
   DungeonRoom,
-  KEY_PATH_SLOT,
   BOSS_SLOT,
+  BOSS_UNLOCK_THRESHOLD,
   speciesForBiome,
+  pickDiverseSpecies,
 } from '../data/dungeon';
-import { RoomTemplate, Biome, TEST_ROOMS } from '../data/room_templates';
+import { RoomTemplate, Biome, TEST_ROOMS, BOSS_ROOM } from '../data/room_templates';
 import { DECORATION_CATALOG } from '../data/decorations';
 import { CombatManager, CompanionEntry, DefeatedRiftling } from '../combat/CombatManager';
 import { computeEliteFormation } from '../combat/eliteFormation';
-import { Party, PartyRiftling, createStartingParty, createRiftling, addToParty, awardXP, getActiveSynergies, BENCH_XP_RATIO, LevelUpResult, RIFTLING_TEMPLATES, AVAILABLE_RIFTLINGS, TYPE_COLORS, speciesScale, generateStatCards, applyStatCard, getUpgradeMoveForLevel, applyMoveUpgrade } from '../data/party';
+import { Party, PartyRiftling, createStartingParty, createRiftling, createRiftlingAtLevel, addToParty, awardXP, getActiveSynergies, BENCH_XP_RATIO, LevelUpResult, RIFTLING_TEMPLATES, AVAILABLE_RIFTLINGS, TYPE_COLORS, speciesScale, generateStatCards, applyStatCard, getUpgradeMoveForLevel, applyMoveUpgrade } from '../data/party';
 import { getXPMultiplier, getBossTimerBonus, getEliteXPMultiplier, getLowestLevelXPBonus, TRINKET_CATALOG, TrinketDef, addTrinket, ALL_TRINKET_IDS } from '../data/trinkets';
 import { SimpleNav, NavPoint, NAV_ARRIVAL_RADIUS, STUCK_WINDOW_MS, STUCK_THRESHOLD_PX } from '../data/nav';
 import { playWalkOrStatic, stopWalkAnim, directionFromVelocity } from '../data/anims';
@@ -21,9 +22,25 @@ import { LevelUpCardPrompt } from '../ui/LevelUpCardPrompt';
 import { PartyScreen } from '../ui/PartyScreen';
 import { CombatHUD } from '../ui/CombatHUD';
 import { SynergyHUD } from '../ui/SynergyHUD';
+import { RoleHUD } from '../ui/RoleHUD';
+import { applyStoredVolume, createVolumeWidget } from '../ui/VolumeWidget';
+
 
 const TILE = 16;
 const TRAINER_SPEED = 90;
+
+type StarterMode = 'gathering' | 'library';
+const STARTER_MODE_KEY = 'intotherift:starterMode';
+function getStarterMode(): StarterMode {
+  try {
+    return localStorage.getItem(STARTER_MODE_KEY) === 'library' ? 'library' : 'gathering';
+  } catch {
+    return 'gathering';
+  }
+}
+function setStarterMode(mode: StarterMode): void {
+  try { localStorage.setItem(STARTER_MODE_KEY, mode); } catch { /* ignore */ }
+}
 
 /** Pick `count` random unique trinkets from the catalog. */
 function pickRandomTrinkets(count: number): TrinketDef[] {
@@ -67,14 +84,15 @@ const FOLLOW_OFFSETS = [
  *
  * Renders one room at a time from a template. The player moves with WASD,
  * a companion riftling follows. Walking into a door tile transitions to
- * the connected room. A minimap shows the dungeon layout.
+ * the connected room.
  */
 /** Tracked tile render entry — kept so the in-browser builder can incrementally
  * update tiles without rebuilding the whole room. One entry per (x,y). The
- * `overlay` is the translucent blue rect added on top of active doors. */
+ * `overlay` is the rift portal sprite on active door tiles (rendered once per
+ * 2-tile door pair on the primary tile, left-blank on the secondary). */
 interface TileEntry {
   image: Phaser.GameObjects.Image | null;
-  overlay: Phaser.GameObjects.Rectangle | null;
+  overlay: Phaser.GameObjects.Rectangle | Phaser.GameObjects.Image | null;
   wallBody: Phaser.Physics.Arcade.Sprite | null;
   pathOverlay: Phaser.GameObjects.Image | null;
 }
@@ -89,6 +107,12 @@ interface DecorationEntry {
   body: Phaser.Physics.Arcade.Sprite | null;
   baseDepth: number;
   immersive: boolean;
+}
+
+/** Tracked static-actor body (e.g. the boss-room Rift Elite). Used so the
+ * nav grid can route around them like it does for decoration colliders. */
+interface StaticActorEntry {
+  body: Phaser.Physics.Arcade.Sprite | null;
 }
 
 interface CompanionState {
@@ -118,6 +142,7 @@ export class DungeonScene extends Phaser.Scene {
   private trainerTrail: { x: number; y: number }[] = [];
   private nav!: SimpleNav;
   private walls!: Phaser.Physics.Arcade.StaticGroup;
+  private debugBodiesEnabled = false;
   private doorZones: { zone: Phaser.GameObjects.Zone; targetRoomId: number }[] = [];
 
   /** Tile render tracking — [y][x]. Populated in loadRoom, used by the
@@ -128,8 +153,22 @@ export class DungeonScene extends Phaser.Scene {
    * via removeDecorationAt(); added via addDecoration(). */
   private decorationEntries: DecorationEntry[] = [];
 
+  /** Static actor render tracking — set dressing creature sprites with
+   * idle animations (e.g. the boss-room Rift Elite). Repopulated per load. */
+  private staticActorEntries: StaticActorEntry[] = [];
+
+  /** Per-tile biome override used by hub rooms so the two floor tiles
+   * leading into each branch door render with that branch's biome tileset,
+   * creating a visible transition from hub grass to branch terrain. Keyed
+   * as "x,y". Rebuilt per loadRoom. */
+  private tileBiomeOverride: Map<string, Biome> = new Map();
+
   private dungeon!: Dungeon;
   private currentRoom!: DungeonRoom;
+
+  /** Set when the boss door transitions locked→unlocked. Consumed by the
+   *  next hub load to show a toast + door pulse effect. */
+  private pendingBossUnlockAnnouncement = false;
 
   private keys!: {
     W: Phaser.Input.Keyboard.Key;
@@ -141,11 +180,8 @@ export class DungeonScene extends Phaser.Scene {
   // HUD elements
   private timerText!: Phaser.GameObjects.Text;
   private roomLabel!: Phaser.GameObjects.Text;
-  private timerSeconds = 360;
+  private timerSeconds = 600;
   private timerEvent!: Phaser.Time.TimerEvent;
-
-  // Minimap
-  private minimapGfx!: Phaser.GameObjects.Graphics;
 
   // Combat
   private combatManager!: CombatManager;
@@ -153,6 +189,15 @@ export class DungeonScene extends Phaser.Scene {
   private roomClearedText!: Phaser.GameObjects.Text | null;
   /** Non-combatant rift entity that commands an elite squad — vanishes on victory. */
   private eliteNpcSprite: Phaser.GameObjects.Sprite | null = null;
+  private eliteNpcBody: Phaser.Physics.Arcade.Sprite | null = null;
+  private seenFirstElite = false;
+  private seenSetupTutorial = false;
+
+  // Rift Core — final reward in boss arena; player walks to it after defeating the final boss.
+  private riftCoreSprite: Phaser.GameObjects.Sprite | null = null;
+  private riftCoreZone: Phaser.GameObjects.Zone | null = null;
+  private riftCoreLabel: Phaser.GameObjects.Text | null = null;
+  private riftCoreActive = false;
 
   // Healing spring
   private healingSpring: { zone: Phaser.GameObjects.Zone; visual: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text } | null = null;
@@ -175,6 +220,26 @@ export class DungeonScene extends Phaser.Scene {
   private recruitGatheringUsed = false;
   /** True while the starter riftling selection overlay is open. */
   private starterSelectActive = false;
+  /** Starter gathering — 3 NPC riftlings in the start room. Walking up
+   *  opens the same RecruitPrompt card flow used for regular recruits. */
+  private starterGathering: {
+    zone: Phaser.GameObjects.Zone;
+    sprites: Phaser.GameObjects.Image[];
+    label: Phaser.GameObjects.Text;
+    offerings: string[];
+  } | null = null;
+  private starterGatheringUsed = false;
+  /** Top-left button to swap starter mode. Destroyed once a starter is picked. */
+  private starterModeButton: Phaser.GameObjects.Container | null = null;
+  /** Library overlay teardown — set by showStarterLibrary, used by the toggle. */
+  private starterLibraryTeardown: (() => void) | null = null;
+  /** True once the player has chosen a starter — suppresses mode switching. */
+  private starterChosen = false;
+  private gameEnding = false;
+
+  // Collider references — removed before re-adding on room transitions (BUG-004 fix)
+  private trainerWallCollider: Phaser.Physics.Arcade.Collider | null = null;
+  private companionWallColliders: Phaser.Physics.Arcade.Collider[] = [];
 
   // Starter trinket selection overlay
   private trinketSelectUI: Phaser.GameObjects.Container | null = null;
@@ -202,24 +267,70 @@ export class DungeonScene extends Phaser.Scene {
   private partyHud!: Phaser.GameObjects.Container;
   private partyScreen!: PartyScreen;
   private synergyHud!: SynergyHUD;
+  private roleHud!: RoleHUD;
+  private controlHintsContainer!: Phaser.GameObjects.Container;
+  private volumeWidgetContainer!: Phaser.GameObjects.Container;
 
   constructor() {
     super({ key: 'Dungeon' });
   }
 
   create(): void {
-    // Direct-load debug path: ?testRoom=<key> loads a single named room from
-    // TEST_ROOMS in isolation so world builders can iterate on a biome without
-    // playing through the dungeon. Unknown keys fall through to the normal path.
-    const testKey = new URLSearchParams(window.location.search).get('testRoom');
-    const testTemplate = testKey ? TEST_ROOMS[testKey] : undefined;
+    applyStoredVolume(this);
+    this.sound.stopAll();
+    if (this.cache.audio.exists('music_dungeon')) {
+      this.sound.play('music_dungeon', { loop: true, volume: 0.4 });
+    }
+
+    // Reset stale references from a previous scene lifecycle so we always
+    // take the fresh-creation path for physics sprites.
+    this.trainer = undefined as any;
+    this.companions = [];
+    this.gameEnding = false;
+    this.trainerWallCollider = null;
+    this.companionWallColliders = [];
+    this.starterChosen = false;
+    this.starterGatheringUsed = false;
+    this.starterSelectActive = false;
+    this.starterGathering = null;
+    this.starterModeButton = null;
+    this.starterLibraryTeardown = null;
+
+    // Direct-load debug paths:
+    //   ?testRoom=<key>  loads a single named room from TEST_ROOMS for world
+    //                    builders to iterate on a biome.
+    //   ?bossTest=1      loads BOSS_ROOM with a pre-filled party for tuning
+    //                    boss attacks, animations, and combat concepts.
+    //                    Optional: &riftlings=key1,key2 (default emberhound,solarglare)
+    //                              &level=N (default 5)
+    const params = new URLSearchParams(window.location.search);
+    const testKey = params.get('testRoom');
+    const bossTest = params.get('bossTest');
+    const testTemplate = testKey ? TEST_ROOMS[testKey] : (bossTest ? BOSS_ROOM : undefined);
     this.dungeon = testTemplate ? generateTestDungeon(testTemplate) : generateDungeon();
     this.refreshHubDoorStates();
     this.currentRoom = this.dungeon.rooms[this.dungeon.currentRoomId];
 
+    // Boss-test rooms must be uncleared so tryStartCombat actually triggers.
+    if (bossTest) {
+      this.currentRoom.cleared = false;
+    }
+
     this.walls = this.physics.add.staticGroup();
     this.roomClearedText = null;
-    this.party = createStartingParty(); // temporary default, replaced by starter select
+    // Start with an empty active party — the starter picker fills it. The
+    // testRoom and bossTest debug paths skip the picker.
+    this.party = createStartingParty();
+    if (bossTest) {
+      const keysParam = params.get('riftlings');
+      const requested = (keysParam ? keysParam.split(',') : ['emberhound', 'solarglare'])
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const level = Math.max(1, parseInt(params.get('level') ?? '5', 10) || 5);
+      this.party.active = requested.map((key) => createRiftlingAtLevel(key, level));
+    } else if (!testTemplate) {
+      this.party.active = [];
+    }
     this.activeCompanionIndex = 0;
     this.setupInput();
 
@@ -237,24 +348,37 @@ export class DungeonScene extends Phaser.Scene {
       this.syncCompanions();
       this.drawPartyHud();
       this.synergyHud?.refresh();
+      this.roleHud?.refresh();
     });
     this.setupCamera(this.currentRoom.template);
     this.setupHUD();
     this.setupPartyHud();
     this.synergyHud = new SynergyHUD(this, () => this.party.active);
     this.synergyHud.refresh();
-    this.setupMinimap();
+    this.roleHud = new RoleHUD(this, () => this.party.active);
+    this.roleHud.refresh();
+    this.createControlHints();
     this.startTimer();
 
     this.spawnHealingSpring();
     this.spawnRiftShard();
     this.spawnRecruitGathering();
 
-    // Show starter riftling selection — timer paused, gameplay frozen until chosen.
-    // Skipped in testRoom direct-load so world builders can view scenes without
-    // the picker overlay blocking the camera.
+    // Starter riftling selection. Two modes — the player's last choice is
+    // persisted in localStorage and a top-left toggle lets them flip.
+    // Skipped in testRoom direct-load so world builders can view scenes
+    // without the picker blocking the camera.
     if (!testTemplate) {
-      this.showStarterSelect();
+      this.createStarterModeButton();
+      if (getStarterMode() === 'library') {
+        this.showStarterLibrary();
+      } else {
+        this.spawnStarterGathering();
+      }
+    } else if (bossTest) {
+      // Boss-test direct-load: party is already populated and synced, so
+      // kick off the boss encounter immediately.
+      this.tryStartCombat();
     }
 
     // Dev-only: load the in-browser world builder. Dynamic import behind
@@ -299,8 +423,14 @@ export class DungeonScene extends Phaser.Scene {
       getDungeon: () => this.dungeon,
       isPartyScreenActive: () => this.partyScreen?.isActive ?? false,
       getTimerSeconds: () => this.timerSeconds,
-      /** Teleport to a room by ID — for QA testing only. */
-      warpToRoom: (roomId: number) => this.transitionToRoom(roomId),
+      /** Teleport to a room by ID — for QA testing only.
+       * Refuses during combat: loadRoom() clears the physics walls group
+       * out from under CombatManager, triggering a TypeError in its update
+       * loop. */
+      warpToRoom: (roomId: number) => {
+        if (this.combatManager?.isActive) return;
+        this.transitionToRoom(roomId);
+      },
       /** Inject a riftling into the party by species key — for QA testing only. */
       injectRiftling: (key: string) => {
         const r = createRiftling(key);
@@ -308,6 +438,7 @@ export class DungeonScene extends Phaser.Scene {
         this.syncCompanions();
         this.drawPartyHud();
         this.synergyHud?.refresh();
+        this.roleHud?.refresh();
       },
       /** Active type synergies for the current party. */
       getActiveSynergies: () => getActiveSynergies(this.party.active),
@@ -335,6 +466,13 @@ export class DungeonScene extends Phaser.Scene {
         this.showLevelUps(results, () => {
           this.drawPartyHud();
         });
+      },
+      /** Teleport the trainer to an absolute world pixel — for QA only. */
+      setTrainerPos: (x: number, y: number) => {
+        if (!this.trainer) return;
+        this.trainer.setVelocity(0, 0);
+        this.trainer.setPosition(x, y);
+        this.trainer.setDepth(10 + y / 10);
       },
       isRiftShardSelecting: () => this.riftShardSelecting,
       /** Trinket inventory (equipped + bag). */
@@ -372,15 +510,20 @@ export class DungeonScene extends Phaser.Scene {
     // Clear previous room visuals — preserve persistent HUD/player objects
     const persistentArr: (Phaser.GameObjects.GameObject | undefined)[] = [
       this.trainer,
-      this.timerText, this.roomLabel, this.minimapGfx,
+      this.timerText, this.roomLabel,
       this.partyHud, this.recruitPrompt?.getContainer(),
       this.levelUpPrompt?.getContainer(),
       this.partyScreen?.getContainer(),
       this.combatHud?.getContainer(),
       this.synergyHud?.getContainer(),
+      this.roleHud?.getContainer(),
       this.riftShardUI ?? undefined,
+      ...((this.riftShardUI as any)?.__hitAreas ?? []),
       this.trinketSelectUI ?? undefined,
       this.synergyHud?.getTooltipContainer(),
+      this.roleHud?.getTooltipContainer(),
+      this.controlHintsContainer,
+      this.volumeWidgetContainer,
     ];
     const persistent = new Set(persistentArr.filter(Boolean) as Phaser.GameObjects.GameObject[]);
     this.children.getAll().forEach((child) => {
@@ -389,16 +532,36 @@ export class DungeonScene extends Phaser.Scene {
     this.companions = [];
     this.healingSpring = null;
     this.riftShard = null;
+    this.riftCoreSprite = null;
+    this.riftCoreZone = null;
+    this.riftCoreLabel = null;
+    this.riftCoreActive = false;
     this.recruitGathering = null;
     this.walls.clear(true, true);
     this.doorZones = [];
     this.tileEntries = [];
     this.decorationEntries = [];
+    this.staticActorEntries = [];
 
     const tmpl = room.template;
     const roomPixelW = tmpl.width * TILE;
     const roomPixelH = tmpl.height * TILE;
     const isHub = tmpl.type === 'hub';
+
+    // Reconcile hub door locks against current progression every time the
+    // hub is loaded. Seal/unlock flags usually stay in sync via
+    // sealBranchIfLeavingTerminal, but this guards against any path that
+    // lands the player back in the hub without going through that commit.
+    if (isHub) this.refreshHubDoorStates();
+
+    // If the boss door just unlocked (flag set by refreshHubDoorStates when
+    // the player sealed the branch that pushed them over the threshold),
+    // play the "door opens in the distance" feedback shortly after the hub
+    // finishes rendering so the pulse is visible in context.
+    if (isHub && this.pendingBossUnlockAnnouncement) {
+      this.pendingBossUnlockAnnouncement = false;
+      this.time.delayedCall(500, () => this.announceBossUnlocked());
+    }
 
     // Hub rooms bypass cardinal edge masking — their door tiles are authored
     // at explicit positions via tmpl.hubDoorSlots and always stay walkable.
@@ -437,6 +600,32 @@ export class DungeonScene extends Phaser.Scene {
 
     const biome = tmpl.biome || 'dungeon';
 
+    // Build per-tile biome override for hub doors — the two floor tiles
+    // immediately inside each active branch door render with the branch's
+    // biome tileset so stepping toward a door previews its destination.
+    this.tileBiomeOverride.clear();
+    if (isHub && tmpl.hubDoorSlots) {
+      for (const door of this.dungeon.doors) {
+        if (door.sealed || door.locked) continue;
+        const slot = tmpl.hubDoorSlots.find((s) => s.slot === door.slot);
+        if (!slot) continue;
+        let branch = this.dungeon.branches.find((b) => b.id === door.branchId);
+        if (!branch && this.dungeon.boss.id === door.branchId) branch = this.dungeon.boss;
+        if (!branch) continue;
+        const branchBiome = branch.archetype.biome;
+        const onHorizontalWall = slot.ty === 0 || slot.ty === tmpl.height - 1;
+        const span = slot.span ?? 2;
+        // Override the door opening tiles (span along the wall).
+        for (let i = 0; i < span; i++) {
+          const tx = onHorizontalWall ? slot.tx + i : slot.tx;
+          const ty = onHorizontalWall ? slot.ty : slot.ty + i;
+          if (tx >= 0 && ty >= 0 && tx < tmpl.width && ty < tmpl.height) {
+            this.tileBiomeOverride.set(`${tx},${ty}`, branchBiome);
+          }
+        }
+      }
+    }
+
     // Initialize tracking grid
     for (let y = 0; y < tmpl.height; y++) {
       const row: TileEntry[] = [];
@@ -458,8 +647,21 @@ export class DungeonScene extends Phaser.Scene {
     // group so existing trainer/companion colliders apply without extra wiring.
     if (tmpl.decorations) {
       for (const dec of tmpl.decorations) {
-        this.spawnDecorationSprite(dec.sprite, dec.x, dec.y);
+        this.spawnDecorationSprite(dec.sprite, dec.x, dec.y, dec.noCollide);
       }
+    }
+
+    // Static actors (e.g. the boss-room Rift Elite) — non-combat creature
+    // sprites with idle animations placed as set dressing.
+    if (tmpl.staticActors) {
+      for (const actor of tmpl.staticActors) {
+        this.spawnStaticActor(actor);
+      }
+    }
+
+    // If re-entering the cleared final boss room, re-activate the rift core.
+    if (room.cleared && tmpl.type === 'boss' && this.riftCoreSprite) {
+      this.activateRiftCore();
     }
 
     // Create door trigger zones using grid-position-based mapping
@@ -472,9 +674,8 @@ export class DungeonScene extends Phaser.Scene {
     // pathfinder routes around trees, logs, etc. instead of cutting straight
     // through them and leaving followers grinding against the collider.
     const decBlocked = new Set<number>();
-    for (const entry of this.decorationEntries) {
-      if (!entry.body) continue;
-      const body = entry.body.body as Phaser.Physics.Arcade.StaticBody;
+    const blockBody = (b: Phaser.Physics.Arcade.Sprite) => {
+      const body = b.body as Phaser.Physics.Arcade.StaticBody;
       const minTx = Math.floor(body.x / TILE);
       const maxTx = Math.floor((body.x + body.width - 1) / TILE);
       const minTy = Math.floor(body.y / TILE);
@@ -486,6 +687,12 @@ export class DungeonScene extends Phaser.Scene {
           }
         }
       }
+    };
+    for (const entry of this.decorationEntries) {
+      if (entry.body) blockBody(entry.body);
+    }
+    for (const entry of this.staticActorEntries) {
+      if (entry.body) blockBody(entry.body);
     }
 
     // Build nav grid from the resolved tile map for this room (plus the
@@ -495,6 +702,83 @@ export class DungeonScene extends Phaser.Scene {
     this.nav = new SimpleNav(resolved, TILE, decBlocked, 12);
 
     room.visited = true;
+
+    // Re-apply debug body draw if F9 was toggled on — loadRoom destroys
+    // all non-persistent children, including the physics debug graphic.
+    if (this.debugBodiesEnabled) this.applyPhysicsDebug();
+  }
+
+  /**
+   * Sync Phaser's arcade physics debug draw to `debugBodiesEnabled`.
+   * The debug graphic is a scene child and gets wiped by loadRoom, so
+   * this also recreates it when needed. F9 calls this; loadRoom calls
+   * it too if the flag is on.
+   */
+  private applyPhysicsDebug(): void {
+    const world = this.physics.world;
+    world.drawDebug = this.debugBodiesEnabled;
+    if (this.debugBodiesEnabled) {
+      if (!world.debugGraphic || !world.debugGraphic.scene) {
+        world.createDebugGraphic();
+      }
+      world.debugGraphic?.setVisible(true);
+    } else if (world.debugGraphic) {
+      world.debugGraphic.clear();
+      world.debugGraphic.setVisible(false);
+    }
+  }
+
+  /**
+   * F9 debug tool: click a decoration to add or remove its collision body.
+   * Returns true if a decoration was found near the click (consuming the event).
+   */
+  private toggleDecorationCollider(worldX: number, worldY: number): boolean {
+    let bestEntry: DecorationEntry | null = null;
+    let bestDist = Infinity;
+    for (const entry of this.decorationEntries) {
+      // img uses origin(0.5, 1.0) so getBounds() gives the actual screen rect.
+      const bounds = entry.img.getBounds();
+      // Expand bounds slightly (4px) for easier clicking on small props.
+      const pad = 4;
+      if (
+        worldX >= bounds.x - pad && worldX <= bounds.right + pad &&
+        worldY >= bounds.y - pad && worldY <= bounds.bottom + pad
+      ) {
+        // Prefer the entry whose visual center is closest to the click.
+        const cx = bounds.centerX;
+        const cy = bounds.centerY;
+        const dist = Math.abs(cx - worldX) + Math.abs(cy - worldY);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestEntry = entry;
+        }
+      }
+    }
+    if (!bestEntry) return false;
+
+    if (bestEntry.body) {
+      // Remove existing collider
+      this.walls.remove(bestEntry.body, true, true);
+      bestEntry.body = null;
+      console.log(`[F9] Removed collider: ${bestEntry.sprite} @ (${bestEntry.x}, ${bestEntry.y})`);
+    } else {
+      // Add a collider using catalog defaults
+      const def = DECORATION_CATALOG[bestEntry.sprite];
+      const bodyW = def?.collisionWidth ?? Math.round((def?.displaySize ?? 32) * 0.4);
+      const bodyH = def?.collisionHeight ?? Math.round((def?.displaySize ?? 32) * 0.3);
+      const anchor = def?.collisionAnchor ?? 'base';
+      const bodyY = anchor === 'center'
+        ? bestEntry.img.y - bestEntry.img.displayHeight / 2
+        : bestEntry.img.y - bodyH / 2;
+      const bx = bestEntry.x * TILE + TILE / 2;
+      const body = this.walls.create(bx, bodyY, 'wall') as Phaser.Physics.Arcade.Sprite;
+      body.setVisible(false);
+      body.setSize(bodyW, bodyH);
+      body.refreshBody();
+      bestEntry.body = body;
+      console.log(`[F9] Added collider: ${bestEntry.sprite} @ (${bestEntry.x}, ${bestEntry.y}) — ${bodyW}×${bodyH}px`);
+    }
+    return true;
   }
 
   /** Compute which edges (north/south/east/west) have connections. */
@@ -656,14 +940,79 @@ export class DungeonScene extends Phaser.Scene {
     const wangIndex = (se << 0) | (sw << 1) | (ne << 2) | (nw << 3);
     const img = this.add.image(px, py, `${biome}_${wangIndex}`).setDepth(-1);
 
-    // Door highlight — also tracked on the tile entry for builder cleanup
+    // Door portal — rendered once per 2-tile door pair on the primary tile
+    // (the one with no door neighbor to the west or north). Tracked on the
+    // tile entry so the builder can clean it up on re-render.
     if (tileType === 3) {
-      const overlay = this.add.rectangle(px, py, TILE, TILE, 0x66aaff, 0.25).setDepth(0);
+      this.placeRiftPortal(grid, x, y, w, h, px, py, biome);
+    }
+    return img;
+  }
+
+  private portalKeyForBiome(_biome: Biome | 'dungeon'): string | null {
+    return null;
+  }
+
+  /** Place a single rift portal sprite per door pair, centered between the
+   * two door tiles. Skips the secondary tile so we don't render twice. */
+  private placeRiftPortal(
+    grid: number[][],
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    px: number,
+    py: number,
+    biome: Biome | 'dungeon',
+  ): void {
+    const isDoor = (tx: number, ty: number): boolean =>
+      tx >= 0 && ty >= 0 && tx < w && ty < h && grid[ty]?.[tx] === 3;
+    // Skip secondary tile of the pair
+    if (isDoor(x - 1, y) || isDoor(x, y - 1)) return;
+    let portalX = px;
+    let portalY = py;
+    if (isDoor(x + 1, y)) portalX += TILE / 2;
+    else if (isDoor(x, y + 1)) portalY += TILE / 2;
+    // Per-room overlay override (e.g. intro zone stairs) wins over the
+    // biome portal. Spans the full door run so the sprite fills the entire
+    // entrance gap instead of only the first 2-tile pair.
+    const overlayKey = this.currentRoom?.doorOverlay;
+    if (overlayKey) {
+      // Walk east/south from the primary tile to measure the full door run.
+      let runTiles = 1;
+      const horizontal = y === 0 || y === h - 1;
+      if (horizontal) {
+        while (isDoor(x + runTiles, y)) runTiles++;
+      } else {
+        while (isDoor(x, y + runTiles)) runTiles++;
+      }
+      const runPx = runTiles * TILE;
+      // Shift the sprite off the wall edge and into the room so the archway
+      // reads as standing inside the chamber rather than straddling the wall.
+      // Stairs overlays invert the north-wall offset so the steps hang at the
+      // top edge and read as descending into the room from above.
+      const inset = (runPx - TILE) / 2;
+      const northWall = y === 0;
+      const westWall = x === 0;
+      const isStairs = overlayKey === 'rift_stairs_down';
+      const northOffset = isStairs ? 0 : inset;
+      const overlayX = horizontal ? px + inset : px + (westWall ? inset : -inset);
+      const overlayY = horizontal ? py + (northWall ? northOffset : -inset) : py + inset;
+      const overlay = this.add.image(overlayX, overlayY, overlayKey).setDepth(0);
+      const longer = Math.max(overlay.width, overlay.height);
+      const stairsScale = isStairs ? 1.25 : 1;
+      overlay.setScale((runPx / longer) * stairsScale);
       if (this.tileEntries[y]?.[x]) {
         this.tileEntries[y][x].overlay = overlay;
       }
+      return;
     }
-    return img;
+    const key = this.portalKeyForBiome(biome);
+    if (!key) return;
+    const portal = this.add.image(portalX, portalY, key).setDepth(0);
+    if (this.tileEntries[y]?.[x]) {
+      this.tileEntries[y][x].overlay = portal;
+    }
   }
 
   /**
@@ -696,8 +1045,11 @@ export class DungeonScene extends Phaser.Scene {
     const px = x * TILE + TILE / 2;
     const py = y * TILE + TILE / 2;
 
-    if (biome !== 'dungeon') {
-      entry.image = this.renderBiomeTile(biome, resolved, x, y, w, h, px, py, tileType);
+    const overrideBiome = this.tileBiomeOverride.get(`${x},${y}`);
+    const effectiveBiome: Biome | 'dungeon' = overrideBiome ?? biome;
+
+    if (effectiveBiome !== 'dungeon') {
+      entry.image = this.renderBiomeTile(effectiveBiome, resolved, x, y, w, h, px, py, tileType);
     } else {
       switch (tileType) {
         case 0:
@@ -711,7 +1063,7 @@ export class DungeonScene extends Phaser.Scene {
           break;
         case 3:
           entry.image = this.add.image(px, py, 'floor').setDepth(-1);
-          entry.overlay = this.add.rectangle(px, py, TILE, TILE, 0x66aaff, 0.25).setDepth(0);
+          this.placeRiftPortal(resolved, x, y, w, h, px, py, biome);
           break;
       }
     }
@@ -748,12 +1100,18 @@ export class DungeonScene extends Phaser.Scene {
    * coordinates and record it in decorationEntries. Returns false if the
    * sprite key is unknown.
    */
-  private spawnDecorationSprite(sprite: string, tileX: number, tileY: number): boolean {
+  private spawnDecorationSprite(
+    sprite: string,
+    tileX: number,
+    tileY: number,
+    noCollide?: boolean,
+  ): boolean {
     const def = DECORATION_CATALOG[sprite];
     if (!def) {
       console.warn(`Unknown decoration sprite: ${sprite}`);
       return false;
     }
+    const collides = def.collides && !noCollide;
     const worldX = tileX * TILE + TILE / 2;
     const worldY = tileY * TILE + TILE / 2;
     const img = this.add.image(worldX, worldY, def.key);
@@ -763,70 +1121,110 @@ export class DungeonScene extends Phaser.Scene {
     img.setOrigin(0.5, 1.0);
     const baseY = worldY + (img.height * scale) / 2;
     img.y = baseY + (def.yOffset ?? 0);
-    // Depth sorts by the unshifted base (tile-bottom) so yOffset only changes
-    // where the sprite draws, not its sort order. Immersive props like tall
-    // grass still draw in front of a character whose sprite center is above
-    // the tile, but a character who has walked a full tile past the grass
-    // out-sorts it correctly.
     const baseDepth = 10 + baseY / 10;
-    img.setDepth(baseDepth);
+    const immersive = (def.yOffset ?? 0) > 0;
+
+    // Pokémon-style split for immersive props (tall grass): the top half of
+    // the blade is rendered behind every unit at a fixed low depth so heads
+    // and torsos draw cleanly over it; the bottom half is rendered in front
+    // of every unit at a fixed high depth so the blade base always covers
+    // the unit's feet. Both depths are static, so walking through a patch
+    // never crosses a Y-sort threshold and there is no popping.
+    if (immersive) {
+      // Render immersive props (tall grass) at a fixed depth BEHIND every
+      // unit so adjacent grass blades are visible around the unit but never
+      // occlude it. No "front" layer: any front layer creates a hidden
+      // stripe across the unit when it straddles two tile rows vertically,
+      // and the player visual is small enough that an "in-grass" effect
+      // comes naturally from the back blades poking out around the unit.
+      img.setDepth(0);
+    } else {
+      img.setDepth(baseDepth);
+    }
 
     let body: Phaser.Physics.Arcade.Sprite | null = null;
-    if (def.collides) {
+    if (collides) {
       const bodyW = def.collisionWidth ?? Math.round(def.displaySize * 0.4);
       const bodyH = def.collisionHeight ?? Math.round(def.displaySize * 0.3);
-      // Place collision at the sprite's base (trunk level) rather than tile center.
-      // img.y is the bottom edge of the sprite (origin 1.0); center the box there.
-      const bodyY = img.y - bodyH / 2;
+      // img.y is the bottom edge of the sprite (origin 1.0).
+      // 'base' anchor: body sits at the trunk (good for trees).
+      // 'center' anchor: body sits at the visual center (good for rocks,
+      // crystals, logs — their hit area fills the whole sprite).
+      const anchor = def.collisionAnchor ?? 'base';
+      const bodyY = anchor === 'center'
+        ? img.y - img.displayHeight / 2
+        : img.y - bodyH / 2;
       body = this.walls.create(worldX, bodyY, 'wall') as Phaser.Physics.Arcade.Sprite;
       body.setVisible(false);
       body.setSize(bodyW, bodyH);
       body.refreshBody();
     }
 
-    const immersive = (def.yOffset ?? 0) > 0;
     this.decorationEntries.push({ sprite, x: tileX, y: tileY, img, body, baseDepth, immersive });
     return true;
   }
 
   /**
-   * Pokémon-style tall-grass rendering. Immersive decorations (those with a
-   * positive yOffset, e.g. tall grass) normally Y-sort by their own bottom
-   * edge, which makes a unit walking across a multi-tile patch visibly pop
-   * in front of individual grass sprites when their depth crosses each
-   * sprite's baseline. To keep the unit visually inside the patch, any
-   * immersive decoration that a unit is currently overlapping is forced
-   * above that unit's depth for this frame; otherwise it restores its
-   * authored base depth.
+   * Spawn a non-interactive creature sprite as set dressing — e.g. the Rift
+   * Elite presiding over the boss arena. Uses the creature's idle animation
+   * for the chosen direction; falls back to the static rotation texture if
+   * the animation isn't registered. Adds a static collider to `walls` by
+   * default so combat units can't walk through them.
    */
-  private updateImmersiveDecorationDepths(): void {
-    if (this.decorationEntries.length === 0) return;
-    const units: { x: number; y: number; depth: number }[] = [];
-    if (this.trainer?.active) {
-      units.push({ x: this.trainer.x, y: this.trainer.y, depth: this.trainer.depth });
+  private spawnStaticActor(actor: import('../data/room_templates').StaticActor): void {
+    const dir = actor.direction ?? 'south';
+    const textureKey = `${actor.sprite}_${dir}`;
+    if (!this.textures.exists(textureKey)) {
+      console.warn(`[staticActor] missing texture: ${textureKey}`);
+      return;
     }
-    for (const c of this.companions) {
-      if (c.sprite.active) units.push({ x: c.sprite.x, y: c.sprite.y, depth: c.sprite.depth });
+    const worldX = actor.x * TILE + TILE / 2;
+    const worldY = actor.y * TILE + TILE / 2;
+    const sprite = this.add.sprite(worldX, worldY, textureKey);
+    const scale = actor.scale ?? 0.85;
+    sprite.setScale(scale);
+    sprite.setOrigin(0.5, 1.0);
+    // Anchor the foot near the tile center so depth sorting matches other
+    // characters' baselines.
+    const baseY = worldY + (sprite.height * scale) / 2;
+    sprite.y = baseY;
+    sprite.setDepth(10 + baseY / 10);
+
+    const animKey = `${actor.sprite}_idle_${dir}`;
+    if (this.anims.exists(animKey)) sprite.play(animKey);
+
+    if (actor.sprite === 'rift_core') {
+      this.riftCoreSprite = sprite;
+      if (this.anims.exists('rift_core_spin')) sprite.play('rift_core_spin');
     }
-    const RX = TILE * 0.75;
-    const RY = TILE * 0.9;
-    for (const entry of this.decorationEntries) {
-      if (!entry.immersive) continue;
-      const cx = entry.x * TILE + TILE / 2;
-      const cy = entry.y * TILE + TILE / 2;
-      let maxUnitDepth = -Infinity;
-      for (const u of units) {
-        if (Math.abs(u.x - cx) < RX && Math.abs(u.y - cy) < RY) {
-          if (u.depth > maxUnitDepth) maxUnitDepth = u.depth;
-        }
-      }
-      if (maxUnitDepth > -Infinity) {
-        entry.img.setDepth(Math.max(entry.baseDepth, maxUnitDepth + 0.5));
-      } else if (entry.img.depth !== entry.baseDepth) {
-        entry.img.setDepth(entry.baseDepth);
-      }
+    if (actor.sprite === 'rift_elite' && !this.eliteNpcSprite) {
+      this.eliteNpcSprite = sprite;
     }
+
+    let body: Phaser.Physics.Arcade.Sprite | null = null;
+    if (actor.collides ?? true) {
+      const bodyW = 14;
+      const bodyH = 8;
+      const bodyY = sprite.y - bodyH / 2;
+      body = this.walls.create(worldX, bodyY, 'wall') as Phaser.Physics.Arcade.Sprite;
+      body.setVisible(false);
+      body.setSize(bodyW, bodyH);
+      body.refreshBody();
+    }
+
+    if (actor.sprite === 'rift_elite') {
+      this.eliteNpcBody = body;
+    }
+
+    this.staticActorEntries.push({ body });
   }
+
+  /**
+   * Legacy hook — immersive decorations now use a static split-sprite
+   * layering set up at spawn time, so per-frame depth juggling is no
+   * longer needed. Kept as a no-op so callers don't need to be touched.
+   */
+  private updateImmersiveDecorationDepths(): void { return; }
 
   // ─── In-browser builder live-edit hooks ────────────────────────────
   //
@@ -849,6 +1247,35 @@ export class DungeonScene extends Phaser.Scene {
   /** Return the physics walls group so the builder can inspect bodies. */
   public getWallsGroup(): Phaser.Physics.Arcade.StaticGroup {
     return this.walls;
+  }
+
+  /**
+   * Re-render every tile in the current room. Used by the builder's biome
+   * selector after changing `template.biome`.
+   */
+  public rebuildAllTiles(): void {
+    const tmpl = this.currentRoom.template;
+    const isHub = tmpl.type === 'hub';
+    const activeEdges = isHub ? new Set<string>() : this.getActiveEdges(this.currentRoom);
+    const resolved: number[][] = [];
+    for (let y = 0; y < tmpl.height; y++) {
+      const row: number[] = [];
+      for (let x = 0; x < tmpl.width; x++) {
+        let t = tmpl.tiles[y][x];
+        if (t === 3 && !isHub) {
+          const edge = this.tileEdge(x, y, tmpl.width, tmpl.height);
+          if (!edge || !activeEdges.has(edge)) t = 2;
+        }
+        row.push(t);
+      }
+      resolved.push(row);
+    }
+    const biome = tmpl.biome || 'dungeon';
+    for (let y = 0; y < tmpl.height; y++) {
+      for (let x = 0; x < tmpl.width; x++) {
+        this.renderTileAt(x, y, resolved, tmpl.width, tmpl.height, biome);
+      }
+    }
   }
 
   /**
@@ -938,40 +1365,54 @@ export class DungeonScene extends Phaser.Scene {
     // (south-center) is authored into the template but gets no zone —
     // that's how we enforce "no backtrack to the intro zone".
     if (tmpl.type === 'hub' && tmpl.hubDoorSlots) {
-      const slotLookup = new Map<number, { tx: number; ty: number }>();
+      const slotLookup = new Map<number, { tx: number; ty: number; span: number }>();
       for (const s of tmpl.hubDoorSlots) {
-        slotLookup.set(s.slot, { tx: s.tx, ty: s.ty });
+        slotLookup.set(s.slot, { tx: s.tx, ty: s.ty, span: s.span ?? 2 });
       }
 
       const overlay = this.add.graphics().setDepth(5);
+      const INWARD_DEPTH = 2; // tiles of approach zone carved into the room
 
       for (const door of this.dungeon.doors) {
         const pos = slotLookup.get(door.slot);
         if (!pos) continue;
 
-        // Resolve the target branch — could be regular, key path, or boss.
+        // Resolve the target branch — regular or boss.
         let branch = this.dungeon.branches.find((b) => b.id === door.branchId) ?? null;
-        if (!branch && this.dungeon.keyPath.id === door.branchId) branch = this.dungeon.keyPath;
         if (!branch && this.dungeon.boss.id === door.branchId) branch = this.dungeon.boss;
         if (!branch) continue;
 
+        const onHorizontalWall = pos.ty === 0 || pos.ty === tmpl.height - 1;
+
         if (door.sealed || door.locked) {
-          // Draw a 2-tile overlay matching the door's orientation (side
-          // walls are 2-tall, north wall doors are 2-wide).
-          const onHorizontalWall = pos.ty === 0 || pos.ty === tmpl.height - 1;
-          const w = onHorizontalWall ? TILE * 2 : TILE;
-          const h = onHorizontalWall ? TILE : TILE * 2;
+          // Overlay covers exactly the door tiles (span along the wall,
+          // 1 tile deep into the wall).
+          const w = onHorizontalWall ? TILE * pos.span : TILE;
+          const h = onHorizontalWall ? TILE : TILE * pos.span;
           const color = door.sealed ? 0x222222 : 0x552222;
           overlay.fillStyle(color, 0.75);
           overlay.fillRect(pos.tx * TILE, pos.ty * TILE, w, h);
           continue;
         }
 
+        // Build a trigger zone covering the door span + INWARD_DEPTH tiles
+        // of approach inside the room, so the player trips it reliably.
+        const onNorth = pos.ty === 0;
+        const onSouth = pos.ty === tmpl.height - 1;
+        const onWest = pos.tx === 0;
+        const wTiles = onHorizontalWall ? pos.span : INWARD_DEPTH;
+        const hTiles = onHorizontalWall ? INWARD_DEPTH : pos.span;
+        let x0 = pos.tx;
+        let y0 = pos.ty;
+        if (onNorth) y0 = 0;
+        else if (onSouth) y0 = pos.ty - (INWARD_DEPTH - 1);
+        else if (onWest) x0 = 0;
+        else x0 = pos.tx - (INWARD_DEPTH - 1);
         const zone = this.add.zone(
-          pos.tx * TILE + TILE / 2,
-          pos.ty * TILE + TILE / 2,
-          TILE,
-          TILE,
+          x0 * TILE + (wTiles * TILE) / 2,
+          y0 * TILE + (hTiles * TILE) / 2,
+          wTiles * TILE,
+          hTiles * TILE,
         );
         this.physics.add.existing(zone, true);
         this.doorZones.push({ zone, targetRoomId: branch.entryRoomId });
@@ -1041,14 +1482,16 @@ export class DungeonScene extends Phaser.Scene {
       this.trainer.setPosition(spawnX, spawnY);
       this.trainer.setVelocity(0, 0);
     } else {
-      this.trainer = this.physics.add.sprite(spawnX, spawnY, 'player_south');
+      this.trainer = this.physics.add.sprite(spawnX, spawnY, 'player_north');
+      this.trainerDir = 'north';
       this.trainer.setDepth(10 + spawnY / 10);
       this.trainer.setScale(0.85);
-      this.trainer.body!.setSize(24, 24);
+      this.trainer.body!.setSize(14, 14);
     }
 
     this.trainer.setCollideWorldBounds(true);
-    this.physics.add.collider(this.trainer, this.walls);
+    if (this.trainerWallCollider) this.physics.world.removeCollider(this.trainerWallCollider);
+    this.trainerWallCollider = this.physics.add.collider(this.trainer, this.walls);
 
     // Seed the trail with a straight line extending south from the trainer
     // so newly-spawned companions immediately appear in a conga line behind
@@ -1088,6 +1531,7 @@ export class DungeonScene extends Phaser.Scene {
 
       if (i < this.companions.length && this.companions[i].sprite.active) {
         // Reuse existing companion — reposition and update texture; reset nav state
+        this.companions[i].sprite.anims.stop();
         this.companions[i].sprite
           .setPosition(tx, ty)
           .setVelocity(0, 0)
@@ -1103,6 +1547,7 @@ export class DungeonScene extends Phaser.Scene {
         const sprite = this.physics.add.sprite(tx, ty, texture);
         sprite.setDepth(10 + ty / 10);
         sprite.setScale(spriteScale);
+        sprite.body!.setSize(12, 12);
 
         const entry: CompanionState = {
           sprite,
@@ -1119,13 +1564,16 @@ export class DungeonScene extends Phaser.Scene {
         }
       }
 
-      this.physics.add.collider(this.companions[i].sprite, this.walls);
+      if (this.companionWallColliders[i]) this.physics.world.removeCollider(this.companionWallColliders[i]);
+      this.companionWallColliders[i] = this.physics.add.collider(this.companions[i].sprite, this.walls);
     }
 
     // Remove excess companions if party shrunk
     while (this.companions.length > active.length) {
       const c = this.companions.pop()!;
       if (c.sprite.active) c.sprite.destroy();
+      const col = this.companionWallColliders.pop();
+      if (col) this.physics.world.removeCollider(col);
     }
   }
 
@@ -1176,6 +1624,13 @@ export class DungeonScene extends Phaser.Scene {
         this.partyScreen?.show();
       }
 
+      // F9 — toggle physics body debug draw (visualize colliders).
+      if (e.key === 'F9') {
+        e.preventDefault();
+        this.debugBodiesEnabled = !this.debugBodiesEnabled;
+        this.applyPhysicsDebug();
+      }
+
       // Q/E to cycle selected riftling (works in and out of combat)
       if (e.key === 'q' || e.key === 'Q') {
         this.cycleSelectedIndex(-1);
@@ -1183,20 +1638,6 @@ export class DungeonScene extends Phaser.Scene {
         this.cycleSelectedIndex(1);
       }
 
-      // 1/2 — set stance on selected ally (shift = whole squad).
-      // Hold/Group are still in CombatManager but unbound: drag-and-drop
-      // setup made them redundant, so only Push/Withdraw are player-facing.
-      if (this.combatManager?.isActive) {
-        const stanceKey: Record<string, 'push' | 'hold' | 'withdraw' | 'group'> = {
-          '1': 'push', '2': 'withdraw',
-        };
-        const stance = stanceKey[e.key];
-        if (stance) {
-          if (e.shiftKey) this.combatManager.setAllStances(stance);
-          else this.combatManager.setStanceForIndex(this.selectedIndex, stance);
-          this.drawPartyHud();
-        }
-      }
     });
 
     // Disable right-click context menu on canvas
@@ -1206,6 +1647,11 @@ export class DungeonScene extends Phaser.Scene {
       const worldX = pointer.worldX;
       const worldY = pointer.worldY;
       const inCombat = this.combatManager?.isActive ?? false;
+
+      // F9 debug mode: left-click toggles collision body on nearest decoration.
+      if (this.debugBodiesEnabled && !pointer.rightButtonDown()) {
+        if (this.toggleDecorationCollider(worldX, worldY)) return;
+      }
 
       // Setup phase: left-click on an ally starts a drag-to-reposition.
       if (inCombat && !pointer.rightButtonDown() && this.combatManager.isSetupPhase) {
@@ -1274,6 +1720,8 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   private tryStartCombat(): void {
+    if (this.builderActiveHook?.()) return;
+
     const tmpl = this.currentRoom.template;
     const isCombatRoom = ['combat', 'elite', 'recruit', 'boss'].includes(tmpl.type);
 
@@ -1291,8 +1739,8 @@ export class DungeonScene extends Phaser.Scene {
       // Scale difficulty by room depth and type
       // Rooms cleared so far (not counting start room) drives the ramp
       const roomsCleared = this.dungeon.rooms.filter((r) => r.cleared && r.template.type !== 'start').length;
-      const depthScale = 1 + roomsCleared * 0.6;
-      const typeBonus: Record<string, number> = { combat: 1, recruit: 1.2, elite: 2.0, boss: 3.0 };
+      const depthScale = 1 + roomsCleared * 0.4;
+      const typeBonus: Record<string, number> = { combat: 1, recruit: 1.2, elite: 1.6, boss: 3.0 };
       const difficulty = depthScale * (typeBonus[tmpl.type] ?? 1);
 
       // Scale enemy count for swarm feel — later rooms spawn many more enemies
@@ -1314,7 +1762,7 @@ export class DungeonScene extends Phaser.Scene {
           }
         }
       } else if (tmpl.type === 'combat' || tmpl.type === 'recruit') {
-        const extraCount = Math.floor(roomsCleared * 1.5);
+        const extraCount = Math.floor(roomsCleared * 0.8);
         // Only use walkable floor tiles (value 1) so enemies don't spawn stuck in walls
         const floorTiles: { x: number; y: number }[] = [];
         for (let ry = 2; ry < tmpl.height - 2; ry++) {
@@ -1348,25 +1796,38 @@ export class DungeonScene extends Phaser.Scene {
       // to CombatManager.
       let eliteTrainerPos: { x: number; y: number } | undefined;
       let eliteFormationPixels: { x: number; y: number }[] | undefined;
-      if (tmpl.type === 'elite' && eliteTeam && eliteTeam.length > 0) {
+      if ((tmpl.type === 'elite' || tmpl.type === 'boss') && eliteTeam && eliteTeam.length > 0) {
         const formation = computeEliteFormation(eliteTeam, entrySide, roomPxW, roomPxH);
         eliteFormationPixels = formation.spawns;
         eliteTrainerPos = formation.trainerPos;
 
-        this.eliteNpcSprite?.destroy();
-        // Placeholder rift entity visual: tinted translucent trainer sprite
-        // until a dedicated asset ships.
-        this.eliteNpcSprite = this.add
-          .sprite(eliteTrainerPos.x, eliteTrainerPos.y, 'player_south')
-          .setScale(1.15)
-          .setTint(0xb57aff)
-          .setAlpha(0.85)
-          .setDepth(10 + eliteTrainerPos.y / 10);
+        if (tmpl.type === 'boss') {
+          for (const s of eliteFormationPixels) s.x += TILE;
+        }
+
+        // Boss rooms skip the rift-entity trainer NPC
+        if (tmpl.type !== 'boss') {
+          this.eliteNpcSprite?.destroy();
+          this.eliteNpcSprite = this.add
+            .sprite(eliteTrainerPos.x, eliteTrainerPos.y, 'rift_elite_south')
+            .setDepth(10 + eliteTrainerPos.y / 10);
+          this.eliteNpcSprite.anims.play('rift_elite_idle_south', true);
+        }
+
+        if (!this.seenFirstElite) {
+          this.seenFirstElite = true;
+          this.showMessage('What is that creature? I\'ve never seen anything like it...', '#cc88ff');
+        }
       }
 
       // Build wild-species pool from the room's biome. Biomes are places,
       // not type filters — any element can inhabit any biome.
       const wildSpeciesPool = speciesForBiome(this.currentRoom.template.biome);
+
+      if (tmpl.type === 'boss' && this.cache.audio.exists('music_boss')) {
+        this.sound.stopAll();
+        this.sound.play('music_boss', { loop: true, volume: 0.5 });
+      }
 
       this.combatManager.startEncounter(
         spawns,
@@ -1385,7 +1846,9 @@ export class DungeonScene extends Phaser.Scene {
         this.party.savedFormation,
         (offsets) => { this.party.savedFormation = offsets; },
         () => this.onPartyWiped(),
+        !this.seenSetupTutorial,
       );
+      this.seenSetupTutorial = true;
       // CombatHUD is always visible — no show/hide needed
     }
   }
@@ -1485,15 +1948,67 @@ export class DungeonScene extends Phaser.Scene {
     }
   }
 
+  private activateRiftCore(): void {
+    const core = this.riftCoreSprite;
+    if (!core) return;
+    this.riftCoreActive = true;
+
+    // Pulse glow to draw the player's eye
+    this.tweens.add({
+      targets: core,
+      scaleX: { from: core.scaleX, to: core.scaleX * 1.15 },
+      scaleY: { from: core.scaleY, to: core.scaleY * 1.15 },
+      alpha: { from: 0.85, to: 1 },
+      duration: 900,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    // Prompt label
+    this.riftCoreLabel = this.add
+      .text(core.x, core.y - 28, 'Claim the Rift Core', {
+        fontFamily: 'monospace',
+        fontSize: '8px',
+        color: '#cc88ff',
+        stroke: '#000000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5)
+      .setDepth(100);
+
+    // Interaction zone
+    const zone = this.add.zone(core.x, core.y, 6, 6);
+    this.physics.add.existing(zone, true);
+    this.riftCoreZone = zone;
+  }
+
+  private checkRiftCore(): void {
+    if (!this.riftCoreActive || !this.riftCoreZone) return;
+
+    const trainerBounds = this.trainer.getBounds();
+    const zoneBounds = this.riftCoreZone.getBounds();
+
+    if (Phaser.Geom.Rectangle.Overlaps(trainerBounds, zoneBounds)) {
+      this.riftCoreActive = false;
+      this.showMessage('The Rift Core is yours. The rift falls silent.', '#cc88ff');
+      this.launchVictory();
+    }
+  }
+
   // --- Trinket selection ---
 
-  /** Show the starter trinket selection at run start. Pauses timer until chosen. */
-  private showStarterSelect(): void {
+  /** Library mode: paginated grid of every riftling. Pauses timer until chosen. */
+  private showStarterLibrary(): void {
     this.starterSelectActive = true;
     // Pause timer during selection
     if (this.timerEvent) this.timerEvent.paused = true;
 
     const keys = AVAILABLE_RIFTLINGS;
+    const perPage = 12;
+    const totalPages = Math.ceil(keys.length / perPage);
+    let currentPage = 0;
+
     const container = this.add.container(0, 0).setDepth(700).setScrollFactor(0);
 
     // Dim overlay
@@ -1511,109 +2026,323 @@ export class DungeonScene extends Phaser.Scene {
       stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5));
 
-    // Grid layout — 4 columns
+    // Container for the card grid — destroyed and rebuilt on page change
+    let gridContainer = this.add.container(0, 0);
+    container.add(gridContainer);
+
+    // Page controls — top-right corner, above the card grid
+    const arrowStyle = { fontFamily: 'monospace', fontSize: '12px', color: '#ffdd44', stroke: '#000000', strokeThickness: 4 };
+    const leftArrow = this.add.text(424, 44, '\u25C0', arrowStyle).setOrigin(0.5)
+      .setInteractive({ useHandCursor: true }).on('pointerdown', () => changePage(-1));
+    const pageText = this.add.text(444, 44, '', {
+      fontFamily: 'monospace', fontSize: '10px', color: '#ccbbee',
+      stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    const rightArrow = this.add.text(464, 44, '\u25B6', arrowStyle).setOrigin(0.5)
+      .setInteractive({ useHandCursor: true }).on('pointerdown', () => changePage(1));
+    container.add(leftArrow);
+    container.add(rightArrow);
+
+    // Grid layout — 4 columns, 3 rows per page
     const cols = 4;
     const cardW = 108;
     const cardH = 80;
     const gapX = 8;
     const gapY = 8;
-    const rows = Math.ceil(keys.length / cols);
+    const rowsPerPage = Math.ceil(perPage / cols);
     const totalW = cols * cardW + (cols - 1) * gapX;
-    const totalH = rows * cardH + (rows - 1) * gapY;
+    const totalH = rowsPerPage * cardH + (rowsPerPage - 1) * gapY;
     const gridStartX = 240 - totalW / 2 + cardW / 2;
     const gridStartY = 160 - totalH / 2 + cardH / 2 + 18;
 
-    keys.forEach((key, i) => {
-      const tmpl = RIFTLING_TEMPLATES[key];
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const cx = gridStartX + col * (cardW + gapX);
-      const cy = gridStartY + row * (cardH + gapY);
-      const typeColor = TYPE_COLORS[tmpl.elementType] ?? 0xaaaaaa;
+    const keyMap = ['1','2','3','4','5','6','7','8','9','0','a','b'];
 
-      // Card background
-      const cardBg = this.add.graphics();
-      cardBg.fillStyle(0x1a1a2e, 0.9);
-      cardBg.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
-      cardBg.lineStyle(1, 0x334466, 0.8);
-      cardBg.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
-      container.add(cardBg);
+    const buildPage = () => {
+      gridContainer.destroy(true);
+      gridContainer = this.add.container(0, 0);
+      container.add(gridContainer);
 
-      // Sprite preview
-      const sprite = this.add.image(cx, cy - 14, `${tmpl.texturePrefix}_south`).setScale(0.9 * speciesScale(tmpl.texturePrefix));
-      container.add(sprite);
+      // Update page indicator and arrow visibility
+      pageText.setText(`${currentPage + 1} / ${totalPages}`);
+      leftArrow.setVisible(currentPage > 0);
+      rightArrow.setVisible(currentPage < totalPages - 1);
 
-      // Name
-      container.add(this.add.text(cx, cy + 14, tmpl.name, {
-        fontFamily: 'monospace', fontSize: '11px', color: '#ffffff',
-        stroke: '#000000', strokeThickness: 3,
-      }).setOrigin(0.5));
+      const pageKeys = keys.slice(currentPage * perPage, (currentPage + 1) * perPage);
 
-      // Type + Role
-      const typeHex = '#' + typeColor.toString(16).padStart(6, '0');
-      const label = `${tmpl.elementType.toUpperCase()} · ${tmpl.role.toUpperCase()}`;
-      container.add(this.add.text(cx, cy + 29, label, {
-        fontFamily: 'monospace', fontSize: '9px', color: typeHex,
-        stroke: '#000000', strokeThickness: 3,
-      }).setOrigin(0.5));
+      pageKeys.forEach((key, i) => {
+        const tmpl = RIFTLING_TEMPLATES[key];
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const cx = gridStartX + col * (cardW + gapX);
+        const cy = gridStartY + row * (cardH + gapY);
+        const typeColor = TYPE_COLORS[tmpl.elementType] ?? 0xaaaaaa;
 
-      // Key hint
-      container.add(this.add.text(cx + cardW / 2 - 8, cy - cardH / 2 + 6, `${i + 1}`, {
-        fontFamily: 'monospace', fontSize: '10px', color: '#ffdd44',
-        stroke: '#000000', strokeThickness: 3,
-      }).setOrigin(0.5));
-
-      // Hit area
-      const hitArea = this.add.rectangle(cx, cy, cardW, cardH, 0x000000, 0)
-        .setInteractive({ useHandCursor: true });
-      hitArea.on('pointerover', () => {
-        cardBg.clear();
-        cardBg.fillStyle(0x1a1a2e, 0.9);
-        cardBg.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
-        cardBg.lineStyle(2, typeColor, 0.9);
-        cardBg.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
-      });
-      hitArea.on('pointerout', () => {
-        cardBg.clear();
+        // Card background
+        const cardBg = this.add.graphics();
         cardBg.fillStyle(0x1a1a2e, 0.9);
         cardBg.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
         cardBg.lineStyle(1, 0x334466, 0.8);
         cardBg.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
-      });
-      hitArea.on('pointerdown', () => {
-        window.removeEventListener('keydown', onKey);
-        container.destroy(true);
-        this.onStarterPicked(key);
-      });
-      container.add(hitArea);
-    });
+        gridContainer.add(cardBg);
 
-    // Keyboard: 1-9 then 0 for 10th, a for 11th, b for 12th
-    const keyMap = ['1','2','3','4','5','6','7','8','9','0','a','b','c','d','e','f'];
+        // Sprite preview
+        const sprite = this.add.image(cx, cy - 14, `${tmpl.texturePrefix}_south`).setScale(0.9 * speciesScale(tmpl.texturePrefix));
+        gridContainer.add(sprite);
+
+        // Name
+        gridContainer.add(this.add.text(cx, cy + 14, tmpl.name, {
+          fontFamily: 'monospace', fontSize: '11px', color: '#ffffff',
+          stroke: '#000000', strokeThickness: 3,
+        }).setOrigin(0.5));
+
+        // Type + Role
+        const typeHex = '#' + typeColor.toString(16).padStart(6, '0');
+        const label = `${tmpl.elementType.toUpperCase()} · ${tmpl.role.toUpperCase()}`;
+        gridContainer.add(this.add.text(cx, cy + 29, label, {
+          fontFamily: 'monospace', fontSize: '9px', color: typeHex,
+          stroke: '#000000', strokeThickness: 3,
+        }).setOrigin(0.5));
+
+        // Key hint
+        gridContainer.add(this.add.text(cx + cardW / 2 - 8, cy - cardH / 2 + 6, keyMap[i], {
+          fontFamily: 'monospace', fontSize: '10px', color: '#ffdd44',
+          stroke: '#000000', strokeThickness: 3,
+        }).setOrigin(0.5));
+
+        // Hit area
+        const hitArea = this.add.rectangle(cx, cy, cardW, cardH, 0x000000, 0)
+          .setInteractive({ useHandCursor: true });
+        hitArea.on('pointerover', () => {
+          cardBg.clear();
+          cardBg.fillStyle(0x1a1a2e, 0.9);
+          cardBg.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
+          cardBg.lineStyle(2, typeColor, 0.9);
+          cardBg.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
+        });
+        hitArea.on('pointerout', () => {
+          cardBg.clear();
+          cardBg.fillStyle(0x1a1a2e, 0.9);
+          cardBg.fillRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
+          cardBg.lineStyle(1, 0x334466, 0.8);
+          cardBg.strokeRoundedRect(cx - cardW / 2, cy - cardH / 2, cardW, cardH, 6);
+        });
+        hitArea.on('pointerdown', () => {
+          this.teardownStarterLibrary();
+          this.applyStarter(createRiftlingAtLevel(key, 2));
+        });
+        gridContainer.add(hitArea);
+      });
+    };
+
+    const changePage = (delta: number) => {
+      const next = currentPage + delta;
+      if (next >= 0 && next < totalPages) {
+        currentPage = next;
+        buildPage();
+      }
+    };
+
+    // Keyboard: 1-9, 0, a, b for cards on current page; arrow keys for pagination
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') { changePage(-1); return; }
+      if (e.key === 'ArrowRight') { changePage(1); return; }
       const idx = keyMap.indexOf(e.key.toLowerCase());
-      if (idx >= 0 && idx < keys.length) {
-        window.removeEventListener('keydown', onKey);
-        container.destroy(true);
-        this.onStarterPicked(keys[idx]);
+      const pageKeys = keys.slice(currentPage * perPage, (currentPage + 1) * perPage);
+      if (idx >= 0 && idx < pageKeys.length) {
+        const picked = pageKeys[idx];
+        this.teardownStarterLibrary();
+        this.applyStarter(createRiftlingAtLevel(picked, 2));
       }
     };
     window.addEventListener('keydown', onKey);
+    this.starterLibraryTeardown = () => {
+      window.removeEventListener('keydown', onKey);
+      container.destroy(true);
+      this.starterSelectActive = false;
+      if (this.timerEvent) this.timerEvent.paused = false;
+      this.starterLibraryTeardown = null;
+    };
+
+    buildPage();
   }
 
-  private onStarterPicked(key: string): void {
+  private teardownStarterLibrary(): void {
+    this.starterLibraryTeardown?.();
+  }
+
+  /** Commit the chosen starter. Used by both the gathering and library modes. */
+  private applyStarter(rolled: PartyRiftling): void {
+    this.starterChosen = true;
     this.starterSelectActive = false;
-    // Replace the default party with the chosen starter
-    this.party.active = [createRiftling(key)];
+    this.party.active = [rolled];
     this.party.bench = [];
     this.syncCompanions();
+    // Face the newly drafted starter toward the trainer (who faces north into
+    // the room), so the intro scene reads as the two of them setting off.
+    const starter = this.companions[0];
+    if (starter) {
+      starter.sprite.setTexture(`${rolled.texturePrefix}_north`);
+      starter.dir = 'north';
+    }
     this.drawPartyHud();
     this.synergyHud?.refresh();
+    this.roleHud?.refresh();
+
+    this.destroyStarterModeButton();
+    this.teardownStarterGathering(true);
+    this.showMovementHint();
 
     // Defer trinket grant until the player reaches the hub after the intro
-    // combats. Start the first intro combat immediately.
+    // combats. tryStartCombat is a no-op in the start room (no combat there),
+    // but is called for parity with the prior flow.
     this.starterTrinketPending = true;
+    if (this.timerEvent) this.timerEvent.paused = false;
     this.tryStartCombat();
+  }
+
+  /** Gathering mode: place 3 NPC riftlings in the start room. */
+  private spawnStarterGathering(): void {
+    const room = this.currentRoom;
+    const tmpl = room.template;
+
+    // Pick 3 unique keys from the full library, biased toward different types.
+    const offerings = pickDiverseSpecies(AVAILABLE_RIFTLINGS, 3);
+    if (offerings.length === 0) return;
+
+    const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
+    const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
+    const spacing = 40;
+    const totalW = (offerings.length - 1) * spacing;
+    const startX = cx - totalW / 2;
+
+    const sprites: Phaser.GameObjects.Image[] = [];
+    for (let i = 0; i < offerings.length; i++) {
+      const tmplDef = RIFTLING_TEMPLATES[offerings[i]];
+      if (!tmplDef) continue;
+      const px = startX + i * spacing;
+      const dir = directionFromVelocity(this.trainer.x - px, this.trainer.y - cy);
+      const sprite = this.add
+        .image(px, cy, `${tmplDef.texturePrefix}_${dir}`)
+        .setScale(speciesScale(tmplDef.texturePrefix))
+        .setDepth(10 + cy / 10);
+      this.tweens.add({
+        targets: sprite, y: cy - 2, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.InOut',
+      });
+      sprites.push(sprite);
+    }
+
+    const label = this.add
+      .text(cx, cy - 24, 'Walk here to choose your starter', {
+        fontFamily: 'monospace', fontSize: '8px', color: '#44ff88',
+        stroke: '#000000', strokeThickness: 2,
+      })
+      .setOrigin(0.5).setDepth(100);
+
+    const zoneW = Math.max(48, totalW + 48);
+    const zone = this.add.zone(cx, cy, zoneW, 40);
+    this.physics.add.existing(zone, true);
+
+    this.starterGathering = { zone, sprites, label, offerings };
+    this.starterGatheringUsed = false;
+  }
+
+  private checkStarterGathering(): void {
+    if (!this.starterGathering || this.starterGatheringUsed) return;
+    if (this.recruitPrompt.isActive) return;
+
+    const trainerBounds = this.trainer.getBounds();
+    const zoneBounds = this.starterGathering.zone.getBounds();
+    if (!Phaser.Geom.Rectangle.Overlaps(trainerBounds, zoneBounds)) return;
+
+    this.starterGatheringUsed = true;
+    this.stopAllMovement();
+
+    const stubs: DefeatedRiftling[] = this.starterGathering.offerings
+      .map((key) => {
+        const t = RIFTLING_TEMPLATES[key];
+        if (!t) return null;
+        return { riftlingKey: key, texturePrefix: t.texturePrefix, name: t.name };
+      })
+      .filter((x): x is DefeatedRiftling => x !== null);
+
+    this.recruitPrompt.show(stubs, (picked) => {
+      if (!picked) {
+        // Shouldn't fire — allowSkip is false — but guard anyway.
+        this.starterGatheringUsed = false;
+        return;
+      }
+      this.applyStarter(picked);
+    }, 2, false);
+  }
+
+  /** Remove gathering NPCs. `chosen=true` plays the dispersal fade. */
+  private teardownStarterGathering(chosen: boolean): void {
+    if (!this.starterGathering) return;
+    const g = this.starterGathering;
+    this.starterGathering = null;
+    if (chosen) {
+      g.label.setText('');
+      this.tweens.add({
+        targets: [...g.sprites, g.label],
+        alpha: 0,
+        duration: 600,
+        onComplete: () => {
+          g.sprites.forEach((s) => s.destroy());
+          g.label.destroy();
+          g.zone.destroy();
+        },
+      });
+    } else {
+      g.sprites.forEach((s) => s.destroy());
+      g.label.destroy();
+      g.zone.destroy();
+    }
+  }
+
+  /** Top-left button to flip between gathering and library starter modes. */
+  private createStarterModeButton(): void {
+    const render = () => {
+      this.starterModeButton?.destroy();
+      const mode = getStarterMode();
+      const label = mode === 'gathering' ? 'Show All' : '3 Random';
+
+      const w = 54, h = 14;
+      const container = this.add.container(4, 320 - h - 4).setDepth(700).setScrollFactor(0);
+      const bg = this.add.graphics();
+      bg.fillStyle(0x0e1220, 0.9);
+      bg.fillRoundedRect(0, 0, w, h, 3);
+      bg.lineStyle(1, 0x334466, 0.9);
+      bg.strokeRoundedRect(0, 0, w, h, 3);
+      container.add(bg);
+      container.add(this.add.text(w / 2, h / 2, label, {
+        fontFamily: 'monospace', fontSize: '7px', color: '#ffdd44',
+      }).setOrigin(0.5));
+      const hit = this.add.rectangle(w / 2, h / 2, w, h, 0x000000, 0.001)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => this.toggleStarterMode());
+      container.add(hit);
+      this.starterModeButton = container;
+    };
+    render();
+  }
+
+  private toggleStarterMode(): void {
+    if (this.starterChosen) return;
+    const next: StarterMode = getStarterMode() === 'gathering' ? 'library' : 'gathering';
+    setStarterMode(next);
+    if (next === 'library') {
+      this.teardownStarterGathering(false);
+      this.showStarterLibrary();
+    } else {
+      this.teardownStarterLibrary();
+      this.spawnStarterGathering();
+    }
+    this.createStarterModeButton();
+  }
+
+  private destroyStarterModeButton(): void {
+    this.starterModeButton?.destroy();
+    this.starterModeButton = null;
   }
 
   private showStarterTrinketSelect(): void {
@@ -1740,7 +2469,7 @@ export class DungeonScene extends Phaser.Scene {
 
     // Trinket cards
     const cardW = 140;
-    const cardH = 100;
+    const cardH = 120;
     const gap = 20;
     const totalW = choices.length * cardW + (choices.length - 1) * gap;
     const startX = 240 - totalW / 2 + cardW / 2;
@@ -1760,33 +2489,34 @@ export class DungeonScene extends Phaser.Scene {
       container.add(cardBg);
 
       // Trinket icon (colored diamond)
+      const iconY = cy - cardH / 2 + 18;
       const icon = this.add.graphics();
       icon.fillStyle(color, 0.8);
-      icon.fillTriangle(cx, cy - 30, cx - 8, cy - 18, cx + 8, cy - 18);
+      icon.fillTriangle(cx, iconY - 6, cx - 8, iconY + 6, cx + 8, iconY + 6);
       icon.fillStyle(color, 0.6);
-      icon.fillTriangle(cx, cy - 10, cx - 8, cy - 18, cx + 8, cy - 18);
+      icon.fillTriangle(cx, iconY + 14, cx - 8, iconY + 6, cx + 8, iconY + 6);
       container.add(icon);
 
       // Name
       const nameText = this.add
-        .text(cx, cy, trinket.name, {
+        .text(cx, cy - cardH / 2 + 46, trinket.name, {
           fontFamily: 'monospace',
-          fontSize: '9px',
+          fontSize: '10px',
           color: '#ffffff',
           stroke: '#000000',
           strokeThickness: 2,
           wordWrap: { width: cardW - 12 },
           align: 'center',
         })
-        .setOrigin(0.5);
+        .setOrigin(0.5, 0);
       container.add(nameText);
 
       // Description
       const descText = this.add
-        .text(cx, cy + 18, trinket.description, {
+        .text(cx, cy - cardH / 2 + 62, trinket.description, {
           fontFamily: 'monospace',
-          fontSize: '7px',
-          color: '#44ff88',
+          fontSize: '8px',
+          color: '#7fffa8',
           stroke: '#000000',
           strokeThickness: 1,
           wordWrap: { width: cardW - 12 },
@@ -1797,18 +2527,37 @@ export class DungeonScene extends Phaser.Scene {
 
       // Flavor text
       const flavorText = this.add
-        .text(cx, cy + 34, trinket.flavor, {
+        .text(cx, cy - cardH / 2 + 84, trinket.flavor, {
           fontFamily: 'monospace',
-          fontSize: '6px',
-          color: '#666666',
+          fontSize: '7px',
+          color: '#bfc4d4',
+          stroke: '#000000',
+          strokeThickness: 1,
           wordWrap: { width: cardW - 12 },
           align: 'center',
         })
         .setOrigin(0.5, 0);
       container.add(flavorText);
 
-      // Hover + click hit area
+      // Key hint — top-right corner so it doesn't overlap body text
+      const keyLabel = this.add
+        .text(cx + cardW / 2 - 8, cy - cardH / 2 + 8, `${i + 1}`, {
+          fontFamily: 'monospace',
+          fontSize: '10px',
+          color: '#ffdd44',
+          stroke: '#000000',
+          strokeThickness: 2,
+        })
+        .setOrigin(1, 0);
+      container.add(keyLabel);
+
+      // Hover + click hit area — scene-level (NOT in the container) so that
+      // Phaser's input system uses screen coordinates.  Objects inside a
+      // scrollFactor-0 container still hit-test in world space, which drifts
+      // when the camera scrolls and makes only part of the card clickable.
       const hitArea = this.add.rectangle(cx, cy, cardW, cardH, 0x000000, 0)
+        .setScrollFactor(0)
+        .setDepth(701)
         .setInteractive({ useHandCursor: true });
       hitArea.on('pointerover', () => {
         cardBg.clear();
@@ -1826,22 +2575,11 @@ export class DungeonScene extends Phaser.Scene {
       });
       hitArea.on('pointerdown', () => {
         window.removeEventListener('keydown', onKey);
-        if (this.riftShardUI) { this.riftShardUI.destroy(true); this.riftShardUI = null; }
+        this.destroyRiftShardUI();
         onPicked!(trinket);
       });
-      container.add(hitArea);
-
-      // Key hint
-      const keyLabel = this.add
-        .text(cx, cy + cardH / 2 - 10, `[${i + 1}]`, {
-          fontFamily: 'monospace',
-          fontSize: '10px',
-          color: '#ffdd44',
-          stroke: '#000000',
-          strokeThickness: 2,
-        })
-        .setOrigin(0.5);
-      container.add(keyLabel);
+      (container as any).__hitAreas = (container as any).__hitAreas || [];
+      (container as any).__hitAreas.push(hitArea);
     });
 
     // Keyboard listener
@@ -1849,7 +2587,7 @@ export class DungeonScene extends Phaser.Scene {
       const idx = parseInt(e.key) - 1;
       if (idx >= 0 && idx < choices.length) {
         window.removeEventListener('keydown', onKey);
-        if (this.riftShardUI) { this.riftShardUI.destroy(true); this.riftShardUI = null; }
+        this.destroyRiftShardUI();
         onPicked!(choices[idx]);
       }
     };
@@ -1869,6 +2607,15 @@ export class DungeonScene extends Phaser.Scene {
     // Visual feedback
     this.cameras.main.flash(300, 80, 50, 120);
     this.showMessage(`Equipped: ${trinket.name}`, '#bb88ff');
+  }
+
+  private destroyRiftShardUI(): void {
+    if (this.riftShardUI) {
+      const hitAreas: Phaser.GameObjects.Rectangle[] = (this.riftShardUI as any).__hitAreas || [];
+      for (const h of hitAreas) h.destroy();
+      this.riftShardUI.destroy(true);
+      this.riftShardUI = null;
+    }
   }
 
   /** Called from rift shard room when a trinket is picked in-dungeon. */
@@ -1909,24 +2656,34 @@ export class DungeonScene extends Phaser.Scene {
     const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
     const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
 
-    // Space the NPCs across a horizontal line at room center.
-    const spacing = 28;
-    const totalW = (offerings.length - 1) * spacing;
-    const startX = cx - totalW / 2;
+    // Determine entry side from trainer's spawn position relative to room
+    // center. Riftlings fan out on the axis perpendicular to entry and face
+    // the direction the player came from.
+    const dxFromCenter = this.trainer.x - cx;
+    const dyFromCenter = this.trainer.y - cy;
+    const horizontalEntry = Math.abs(dxFromCenter) > Math.abs(dyFromCenter);
+    const facingDir = horizontalEntry
+      ? (dxFromCenter > 0 ? 'east' : 'west')
+      : (dyFromCenter > 0 ? 'south' : 'north');
+
+    const spacing = 40;
+    const totalLen = (offerings.length - 1) * spacing;
 
     const sprites: Phaser.GameObjects.Image[] = [];
     for (let i = 0; i < offerings.length; i++) {
       const key = offerings[i];
       const tmplDef = RIFTLING_TEMPLATES[key];
       if (!tmplDef) continue;
-      const px = startX + i * spacing;
+      const offset = i * spacing - totalLen / 2;
+      const px = horizontalEntry ? cx : cx + offset;
+      const py = horizontalEntry ? cy + offset : cy;
       const sprite = this.add
-        .image(px, cy, `${tmplDef.texturePrefix}_south`)
+        .image(px, py, `${tmplDef.texturePrefix}_${facingDir}`)
         .setScale(speciesScale(tmplDef.texturePrefix))
-        .setDepth(10 + cy / 10);
+        .setDepth(10 + py / 10);
       this.tweens.add({
         targets: sprite,
-        y: cy - 2,
+        y: py - 2,
         duration: 900,
         yoyo: true,
         repeat: -1,
@@ -1946,8 +2703,9 @@ export class DungeonScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(100);
 
-    const zoneW = Math.max(48, totalW + 48);
-    const zone = this.add.zone(cx, cy, zoneW, 40);
+    const zoneW = horizontalEntry ? 40 : Math.max(48, totalLen + 48);
+    const zoneH = horizontalEntry ? Math.max(48, totalLen + 48) : 40;
+    const zone = this.add.zone(cx, cy, zoneW, zoneH);
     this.physics.add.existing(zone, true);
 
     this.recruitGathering = { zone, sprites, label, offerings, };
@@ -1975,6 +2733,7 @@ export class DungeonScene extends Phaser.Scene {
       })
       .filter((x): x is DefeatedRiftling => x !== null);
 
+    const biomePool = speciesForBiome(this.currentRoom.template.biome);
     this.recruitPrompt.show(stubs, (recruited) => {
       if (recruited) {
         const added = addToParty(this.party, recruited);
@@ -1987,6 +2746,7 @@ export class DungeonScene extends Phaser.Scene {
       this.syncCompanions();
       this.drawPartyHud();
       this.synergyHud?.refresh();
+      this.roleHud?.refresh();
       this.pendingRecruit = false;
 
       // Fade out the remaining NPCs — the chosen one (or none) has been
@@ -2018,41 +2778,82 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   private onPartyWiped(): void {
+    if (this.gameEnding) return;
+    this.gameEnding = true;
     this.stopAllMovement();
     if (this.timerEvent) this.timerEvent.paused = true;
 
+    // Brief fade then hand off to the GameOver scene
     const overlay = this.add
-      .rectangle(240, 160, 480, 320, 0x000000, 0.7)
+      .rectangle(240, 160, 480, 320, 0x000000, 0)
       .setScrollFactor(0)
       .setDepth(700);
-    const title = this.add
-      .text(240, 140, 'Game Over', {
-        fontFamily: 'monospace',
-        fontSize: '24px',
-        color: '#ff4444',
-        stroke: '#000000',
-        strokeThickness: 4,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(701);
-    const sub = this.add
-      .text(240, 172, 'Your riftlings have fallen...', {
-        fontFamily: 'monospace',
-        fontSize: '11px',
-        color: '#ffaaaa',
-        stroke: '#000000',
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(701);
+    this.tweens.add({
+      targets: overlay,
+      alpha: 1,
+      duration: 1200,
+      ease: 'Power2',
+      onComplete: () => {
+        // Starting the already-registered scene re-runs its init/create,
+        // which refreshes the text glyph cache. The earlier remove/re-add
+        // approach threw a duplicate-key error because Phaser's SceneManager
+        // checks keys synchronously in add() before the queued remove runs.
+        this.scene.start('GameOver', { reason: 'wipe' });
+      },
+    });
+  }
 
-    this.time.delayedCall(2200, () => {
-      overlay.destroy();
-      title.destroy();
-      sub.destroy();
-      this.scene.restart();
+  private onTimerExpired(): void {
+    if (this.gameEnding) return;
+    this.gameEnding = true;
+    this.stopAllMovement();
+
+    const overlay = this.add
+      .rectangle(240, 160, 480, 320, 0x000000, 0)
+      .setScrollFactor(0)
+      .setDepth(700);
+    this.tweens.add({
+      targets: overlay,
+      alpha: 1,
+      duration: 1200,
+      ease: 'Power2',
+      onComplete: () => {
+        this.scene.start('GameOver', { reason: 'timeout' });
+      },
+    });
+  }
+
+  private launchVictory(): void {
+    if (this.gameEnding) return;
+    this.gameEnding = true;
+    this.stopAllMovement();
+    this.combatManager.destroy();
+    if (this.timerEvent) this.timerEvent.paused = true;
+
+    const roster = [...this.party.active, ...this.party.bench].map((r) => ({
+      name: r.name,
+      texturePrefix: r.texturePrefix,
+      level: r.level,
+      role: r.role,
+      hp: r.maxHp,
+      attack: r.attack,
+      defense: r.defense,
+      speed: r.speed,
+    }));
+    const timeRemaining = this.timerSeconds;
+
+    const overlay = this.add
+      .rectangle(240, 160, 480, 320, 0x000000, 0)
+      .setScrollFactor(0)
+      .setDepth(700);
+    this.tweens.add({
+      targets: overlay,
+      alpha: 1,
+      duration: 1200,
+      ease: 'Power2',
+      onComplete: () => {
+        this.scene.start('Victory', { timeRemaining, roster });
+      },
     });
   }
 
@@ -2064,6 +2865,10 @@ export class DungeonScene extends Phaser.Scene {
     if (this.eliteNpcSprite) {
       const npc = this.eliteNpcSprite;
       this.eliteNpcSprite = null;
+      if (this.eliteNpcBody) {
+        this.eliteNpcBody.destroy();
+        this.eliteNpcBody = null;
+      }
       this.tweens.add({
         targets: npc,
         alpha: 0,
@@ -2074,13 +2879,16 @@ export class DungeonScene extends Phaser.Scene {
       });
     }
     // CombatHUD stays visible — cooldown bars will stop updating when combat ends
-    this.updateMinimap();
     this.stopAllMovement();
 
-    // Sync all companion HP back from combat
+    // Sync all companion HP back from combat, then heal survivors 20%
     const hps = this.combatManager.getAllyHps();
     for (let i = 0; i < this.party.active.length; i++) {
-      this.party.active[i].hp = hps[i] ?? this.party.active[i].hp;
+      const member = this.party.active[i];
+      member.hp = Math.min(hps[i] ?? member.hp, member.maxHp);
+      if (member.hp > 0) {
+        member.hp = Math.min(member.hp + Math.floor(member.maxHp * 0.2), member.maxHp);
+      }
     }
 
     // Boss clear timer bonus from equipped crystals (e.g. Timer Shard)
@@ -2089,6 +2897,11 @@ export class DungeonScene extends Phaser.Scene {
       if (bossBonus > 0) {
         this.timerSeconds += bossBonus;
         this.showMessage(`+${bossBonus}s from crystal!`, '#ffdd44');
+      }
+
+      // Boss defeated: activate the rift core so the player walks to it for victory.
+      if (this.riftCoreSprite) {
+        this.activateRiftCore();
       }
     }
 
@@ -2144,12 +2957,14 @@ export class DungeonScene extends Phaser.Scene {
       // not — the branch's end-of-path room is the recruiting reward.
       const room = this.currentRoom;
       const recruitAllowed =
-        room.branchId === undefined ||
-        (room.terminal === true && room.template.type === 'recruit');
+        room.template.type !== 'boss' &&
+        (room.branchId === undefined ||
+        (room.terminal === true && room.template.type === 'recruit'));
 
       // Show level-up notifications sequentially, then recruit prompt
       this.showLevelUps(levelUps, () => {
         if (defeated.length > 0 && recruitAllowed) {
+          const biomePool = speciesForBiome(this.currentRoom.template.biome);
           this.recruitPrompt.show(defeated, (recruited) => {
             if (recruited) {
               const added = addToParty(this.party, recruited);
@@ -2162,8 +2977,9 @@ export class DungeonScene extends Phaser.Scene {
             this.syncCompanions();
             this.drawPartyHud();
             this.synergyHud?.refresh();
+            this.roleHud?.refresh();
             this.pendingRecruit = false;
-          }, this.getRecruitTargetLevel());
+          }, this.getRecruitTargetLevel(), true, biomePool);
         } else {
           this.pendingRecruit = false;
         }
@@ -2263,43 +3079,73 @@ export class DungeonScene extends Phaser.Scene {
     this.time.delayedCall(2000, () => msg.destroy());
   }
 
+  private showMovementHint(): void {
+    // no-op — replaced by persistent control hints
+  }
+
+  private createControlHints(): void {
+    const x = 480 - 4;
+    const y = 4;
+    const style: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: 'monospace',
+      fontSize: '8px',
+      color: '#9988bb',
+      stroke: '#000000',
+      strokeThickness: 2,
+    };
+
+    const line1 = this.add.text(0, 0, 'MOVE: WASD', style);
+    const line2 = this.add.text(0, 11, 'BAG:  TAB', style);
+    const tw = Math.max(line1.width, line2.width);
+    const th = line2.y + line2.height;
+    const pad = 3;
+
+    const bg = this.add.rectangle(
+      -pad, -pad, tw + pad * 2, th + pad * 2, 0x000000, 0.45,
+    ).setOrigin(0, 0);
+
+    const cx = x - tw - pad;
+    this.controlHintsContainer = this.add.container(cx, y, [bg, line1, line2]);
+    this.controlHintsContainer.setScrollFactor(0).setDepth(100);
+
+    const volY = y + (th / 2);
+    this.volumeWidgetContainer = createVolumeWidget(this, cx - 66, volY);
+  }
+
   // --- Room transitions ---
 
   /**
    * If `room` is a terminal of some branch, mark that branch cleared, seal
-   * its hub door, set hasOrb when it's the key path, and refresh hub door
-   * unlock states. No-op if the room isn't a terminal.
+   * its hub door, and refresh hub door unlock states. No-op if the room
+   * isn't a terminal.
+   *
+   * Returns `null` normally, or `'victory'` when the boss is cleared
+   * (rift core interaction handles the actual victory trigger).
    */
-  private sealBranchIfLeavingTerminal(room: DungeonRoom): void {
-    if (!room.terminal || room.branchId === undefined) return;
+  private sealBranchIfLeavingTerminal(room: DungeonRoom): 'victory' | null {
+    if (!room.terminal || room.branchId === undefined) return null;
 
     const dungeon = this.dungeon;
     const branchId = room.branchId;
 
-    // Find the branch: check regular branches first, then special ones.
     let branch = dungeon.branches.find((b) => b.id === branchId) ?? null;
-    let isKeyPath = false;
     let isBoss = false;
-    if (!branch && dungeon.keyPath.id === branchId) {
-      branch = dungeon.keyPath;
-      isKeyPath = true;
-    }
     if (!branch && dungeon.boss.id === branchId) {
       branch = dungeon.boss;
       isBoss = true;
     }
-    if (!branch || branch.cleared) return;
+    if (!branch || branch.cleared) return null;
 
     branch.cleared = true;
     const door = dungeon.doors.find((d) => d.branchId === branchId);
     if (door) door.sealed = true;
 
-    if (isKeyPath) dungeon.hasOrb = true;
-    // Boss clear: Stage 4 adds level-advance / victory. For now we just
-    // seal the boss door like any other terminal.
-    void isBoss;
-
     this.refreshHubDoorStates();
+
+    if (isBoss) {
+      return null; // victory via rift core interaction
+    }
+    return null;
   }
 
   /**
@@ -2309,41 +3155,81 @@ export class DungeonScene extends Phaser.Scene {
    *
    * Unlock rules:
    *   - Regular branch doors: always unlocked (sealed flag handles cleared).
-   *   - Key-path door:        locked until `level` regular branches cleared.
-   *   - Boss door:            locked until hasOrb.
+   *   - Boss door:            locked until BOSS_UNLOCK_THRESHOLD regular
+   *                           branches are cleared.
    */
   private refreshHubDoorStates(): void {
     const dungeon = this.dungeon;
     const clearedRegular = dungeon.branches.filter((b) => b.cleared).length;
-    const keyThreshold = dungeon.level;
     for (const door of dungeon.doors) {
-      if (door.slot === KEY_PATH_SLOT) {
-        door.locked = clearedRegular < keyThreshold;
-      } else if (door.slot === BOSS_SLOT) {
-        door.locked = !dungeon.hasOrb;
+      if (door.slot === BOSS_SLOT) {
+        const wasLocked = door.locked;
+        door.locked = clearedRegular < BOSS_UNLOCK_THRESHOLD;
+        if (wasLocked && !door.locked) {
+          this.pendingBossUnlockAnnouncement = true;
+        }
       }
     }
+  }
+
+  /**
+   * Play the "boss door unlocked" feedback: a toast + a gold pulse over the
+   * boss door tiles. Called from loadRoom after the hub renders, so the
+   * player sees the door flash in the distance.
+   */
+  private announceBossUnlocked(): void {
+    this.showMessage('A door opens in the distance...', '#ffdd44');
+
+    const tmpl = this.currentRoom?.template;
+    if (!tmpl || tmpl.type !== 'hub' || !tmpl.hubDoorSlots) return;
+    const slot = tmpl.hubDoorSlots.find((s) => s.slot === BOSS_SLOT);
+    if (!slot) return;
+    const span = slot.span ?? 2;
+    const onHorizontalWall = slot.ty === 0 || slot.ty === tmpl.height - 1;
+    const w = onHorizontalWall ? TILE * span : TILE;
+    const h = onHorizontalWall ? TILE : TILE * span;
+
+    const pulse = this.add.graphics().setDepth(6);
+    pulse.fillStyle(0xffdd44, 0.8);
+    pulse.fillRect(slot.tx * TILE, slot.ty * TILE, w, h);
+    this.tweens.add({
+      targets: pulse,
+      alpha: 0,
+      duration: 1400,
+      repeat: 2,
+      yoyo: true,
+      onComplete: () => pulse.destroy(),
+    });
   }
 
   private transitionToRoom(targetRoomId: number): void {
     // Clean up current combat (keep combatHud — it persists across rooms)
     this.combatManager.destroy();
 
-    // Drop any lingering elite NPC sprite so it doesn't leak across rooms.
+    // Drop any lingering elite NPC sprite/body so it doesn't leak across rooms.
     if (this.eliteNpcSprite) {
       this.eliteNpcSprite.destroy();
       this.eliteNpcSprite = null;
     }
+    if (this.eliteNpcBody) {
+      this.eliteNpcBody.destroy();
+      this.eliteNpcBody = null;
+    }
 
     const prevRoom = this.currentRoom;
-    const targetRoom = this.dungeon.rooms[targetRoomId];
 
     // If the player is leaving a terminal room, the branch is considered
-    // cleared — seal its hub door, set hasOrb if it was the key path, and
+    // cleared — seal its hub door and
     // let the hub unlock logic refresh on the next hub load. This fires
     // regardless of whether combat/UI flows have completed; walking out
     // of the terminal is the commit point.
-    this.sealBranchIfLeavingTerminal(prevRoom);
+    const sealResult = this.sealBranchIfLeavingTerminal(prevRoom);
+    if (sealResult === 'victory') {
+      this.launchVictory();
+      return;
+    }
+
+    const targetRoom = this.dungeon.rooms[targetRoomId];
 
     this.currentRoom = targetRoom;
     this.dungeon.currentRoomId = targetRoomId;
@@ -2356,8 +3242,10 @@ export class DungeonScene extends Phaser.Scene {
 
     this.trainer.setPosition(spawnX, spawnY);
     this.trainer.setVelocity(0, 0);
+    stopWalkAnim(this.trainer, 'player', this.trainerDir);
 
-    this.physics.add.collider(this.trainer, this.walls);
+    if (this.trainerWallCollider) this.physics.world.removeCollider(this.trainerWallCollider);
+    this.trainerWallCollider = this.physics.add.collider(this.trainer, this.walls);
 
     // Re-seed the trail behind the trainer so companions don't try to
     // follow stale breadcrumbs from the previous room (which would be in a
@@ -2377,7 +3265,6 @@ export class DungeonScene extends Phaser.Scene {
     this.combatManager = new CombatManager(this, this.walls);
     this.combatHud.setCombatManager(this.combatManager);
     this.setupCamera(tmpl);
-    this.updateMinimap();
     this.updateRoomLabel();
 
     // Brief flash effect for transition
@@ -2396,6 +3283,7 @@ export class DungeonScene extends Phaser.Scene {
       this.starterTrinketPending = false;
       this.showStarterTrinketSelect();
     }
+
   }
 
   /** Determine pixel spawn position based on which edge the player enters from. */
@@ -2412,6 +3300,10 @@ export class DungeonScene extends Phaser.Scene {
     // the narrower hub.)
     const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
     const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
+
+    if (fromRoom.terminal && tmpl.type === 'hub') {
+      return { x: cx, y: cy + 2 * TILE };
+    }
 
     // Player is arriving from the direction of fromRoom relative to toRoom
     if (dx === 0 && dy > 0) {
@@ -2455,14 +3347,11 @@ export class DungeonScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setOrigin(0.5, 0)
-      .setDepth(100);
-
-    this.updateRoomLabel();
+      .setDepth(100)
+      .setVisible(false);
   }
 
   private updateRoomLabel(): void {
-    const tmpl = this.currentRoom.template;
-    this.roomLabel.setText(`${tmpl.name} [${tmpl.type}]`);
   }
 
   private startTimer(): void {
@@ -2481,6 +3370,7 @@ export class DungeonScene extends Phaser.Scene {
 
         if (this.timerSeconds <= 0) {
           this.timerEvent.destroy();
+          this.onTimerExpired();
         }
       },
       loop: true,
@@ -2625,82 +3515,12 @@ export class DungeonScene extends Phaser.Scene {
     }
   }
 
-  // --- Minimap ---
-
-  private setupMinimap(): void {
-    this.minimapGfx = this.add.graphics()
-      .setScrollFactor(0)
-      .setDepth(100);
-    this.updateMinimap();
-  }
-
-  private updateMinimap(): void {
-    const gfx = this.minimapGfx;
-    gfx.clear();
-
-    const mapX = 400; // top-right area
-    const mapY = 8;
-    const cellSize = 14;
-    const gap = 3;
-
-    // Background
-    gfx.fillStyle(0x000000, 0.5);
-    gfx.fillRect(mapX - 4, mapY - 4, 80, 80);
-
-    for (const room of this.dungeon.rooms) {
-      const rx = mapX + room.gridX * (cellSize + gap);
-      const ry = mapY + room.gridY * (cellSize + gap);
-
-      if (!room.visited) {
-        // Fog of war — show shape but not details
-        gfx.fillStyle(0x333344, 0.6);
-        gfx.fillRect(rx, ry, cellSize, cellSize);
-        continue;
-      }
-
-      // Room color by type
-      let color = 0x555577;
-      switch (room.template.type) {
-        case 'start': color = 0x3366cc; break;
-        case 'hub': color = 0x4488ee; break;
-        case 'combat': color = 0x884422; break;
-        case 'elite': color = 0xcc6600; break;
-        case 'boss': color = 0xcc2222; break;
-        case 'healing': color = 0x22aa44; break;
-        case 'recruit': color = 0x8844aa; break;
-        case 'rift_shard': color = 0x7744cc; break;
-      }
-
-      gfx.fillStyle(color);
-      gfx.fillRect(rx, ry, cellSize, cellSize);
-
-      // Current room indicator
-      if (room.id === this.currentRoom.id) {
-        gfx.lineStyle(2, 0xffffff);
-        gfx.strokeRect(rx - 1, ry - 1, cellSize + 2, cellSize + 2);
-      }
-
-      // Draw connections
-      gfx.lineStyle(1, 0x666688);
-      for (const connId of room.connections) {
-        const conn = this.dungeon.rooms[connId];
-        if (conn.id > room.id) {
-          const cx = mapX + conn.gridX * (cellSize + gap) + cellSize / 2;
-          const cy = mapY + conn.gridY * (cellSize + gap) + cellSize / 2;
-          gfx.lineBetween(
-            rx + cellSize / 2,
-            ry + cellSize / 2,
-            cx,
-            cy
-          );
-        }
-      }
-    }
-  }
-
   // --- Update loop ---
 
   update(time: number): void {
+    // Freeze everything during game-over fade
+    if (this.gameEnding) return;
+
     // Freeze gameplay during overlays
     if (this.partyScreen?.isActive) return;
     if (this.riftShardSelecting) return;
@@ -2719,14 +3539,21 @@ export class DungeonScene extends Phaser.Scene {
       this.recordTrailSample();
     }
 
-    if (this.combatManager.isActive) {
+    if (this.combatManager.isActive && !this.builderActiveHook?.()) {
       this.combatManager.update(time, this.trainer);
-      // Sync live HP from combat back to party data so the HUD reflects damage
-      const hps = this.combatManager.getAllyHps();
-      for (let i = 0; i < this.party.active.length; i++) {
-        this.party.active[i].hp = hps[i] ?? this.party.active[i].hp;
+      // Sync live HP from combat back to party data so the HUD reflects damage.
+      // Re-check isActive: if combat ended inside update(), onRoomCleared already
+      // synced + healed party HP — re-syncing here would overwrite the heal and
+      // allow combat-buffed HP (synergy/trinket maxHp bonuses) to leak into party.
+      if (this.combatManager.isActive) {
+        const hps = this.combatManager.getAllyHps();
+        for (let i = 0; i < this.party.active.length; i++) {
+          const member = this.party.active[i];
+          const raw = hps[i] ?? member.hp;
+          member.hp = Math.min(raw, member.maxHp);
+        }
+        this.drawPartyHud();
       }
-      this.drawPartyHud();
     } else {
       this.updateCompanionFollow();
     }
@@ -2737,14 +3564,44 @@ export class DungeonScene extends Phaser.Scene {
       if (c.sprite.active) c.sprite.setDepth(10 + c.sprite.y / 10);
     }
     this.updateImmersiveDecorationDepths();
+    this.updateEliteNpcFacing();
 
     // Move HUD updates every frame (shows cooldowns in combat, static moves otherwise)
     this.combatHud.update(time);
 
     this.checkHealingSpring();
     this.checkRiftShard();
+    this.checkRiftCore();
     this.checkRecruitGathering();
+    this.checkStarterGathering();
     this.checkDoorTransitions();
+  }
+
+  /**
+   * Point the elite NPC at the player each frame. Uses a cardinal direction
+   * from the elite sprite toward the trainer — picks the axis with larger
+   * magnitude. Idle animation exists for south/east/west; north falls back to
+   * the static north rotation.
+   */
+  private updateEliteNpcFacing(): void {
+    const npc = this.eliteNpcSprite;
+    if (!npc || !npc.active || !this.trainer) return;
+    const dx = this.trainer.x - npc.x;
+    const dy = this.trainer.y - npc.y;
+    let dir: 'south' | 'north' | 'east' | 'west';
+    if (Math.abs(dx) > Math.abs(dy)) dir = dx >= 0 ? 'east' : 'west';
+    else dir = dy >= 0 ? 'south' : 'north';
+
+    if (dir === 'north') {
+      if (npc.anims.isPlaying) npc.anims.stop();
+      npc.setTexture('rift_elite_north');
+      return;
+    }
+    const animKey = `rift_elite_idle_${dir}`;
+    const current = npc.anims.currentAnim?.key;
+    if (current !== animKey || !npc.anims.isPlaying) {
+      npc.anims.play(animKey, true);
+    }
   }
 
   private updateTrainerMovement(): void {
@@ -2934,9 +3791,16 @@ export class DungeonScene extends Phaser.Scene {
     // Can't leave during combat or recruit
     if (this.combatManager.isActive) return;
     if (this.pendingRecruit || this.recruitPrompt.isActive) return;
+    // Can't leave the start room until a starter is chosen.
+    if (!this.starterChosen && (this.starterGathering || this.starterSelectActive)) return;
 
+    // Use the physics body (14×14) rather than the display bounds (48×48 sprite).
+    // Display bounds fire the zone 2–3 tiles before the player visually reaches
+    // the door, which on side-wall slots with a long vertical approach causes
+    // the transition to trigger mid-spine instead of at the door.
+    const body = this.trainer.body as Phaser.Physics.Arcade.Body;
+    const trainerBounds = new Phaser.Geom.Rectangle(body.x, body.y, body.width, body.height);
     for (const { zone, targetRoomId } of this.doorZones) {
-      const trainerBounds = this.trainer.getBounds();
       const zoneBounds = zone.getBounds();
 
       if (Phaser.Geom.Rectangle.Overlaps(trainerBounds, zoneBounds)) {

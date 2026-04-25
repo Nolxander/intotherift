@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { DefeatedRiftling } from '../combat/CombatManager';
-import { createRiftlingAtLevel, PartyRiftling, speciesScale } from '../data/party';
+import { createRiftlingAtLevel, PartyRiftling, RIFTLING_TEMPLATES, speciesScale } from '../data/party';
+import { pickDiverseSpecies } from '../data/dungeon';
 
 /**
  * Recruit prompt — shown after clearing a combat room.
@@ -17,6 +18,7 @@ export class RecruitPrompt {
   private prerolled: PartyRiftling[] = [];
   private onChoice: (riftling: PartyRiftling | null) => void = () => {};
   private active = false;
+  private allowSkip = true;
   private keyHandler?: (event: KeyboardEvent) => void;
 
   constructor(scene: Phaser.Scene) {
@@ -25,24 +27,53 @@ export class RecruitPrompt {
     this.container.setVisible(false);
   }
 
-  show(defeated: DefeatedRiftling[], onChoice: (riftling: PartyRiftling | null) => void, targetLevel: number = 1): void {
-    // Deduplicate by key
+  show(
+    defeated: DefeatedRiftling[],
+    onChoice: (riftling: PartyRiftling | null) => void,
+    targetLevel: number = 1,
+    allowSkip: boolean = true,
+    biomePool: string[] = [],
+  ): void {
+    this.allowSkip = allowSkip;
+    // Deduplicate by key, then cap at 3 so the card row always fits.
     const seen = new Set<string>();
-    this.options = defeated.filter((d) => {
+    const unique = defeated.filter((d) => {
       if (seen.has(d.riftlingKey)) return false;
       seen.add(d.riftlingKey);
       return true;
     });
+    this.options = unique.slice(0, 3);
 
     if (this.options.length === 0) {
       onChoice(null);
       return;
     }
 
-    // If only one unique species was offered, duplicate it so the player still
-    // gets a choice between two rolls of the same riftling with different stats.
-    if (this.options.length === 1) {
-      this.options = [this.options[0], this.options[0]];
+    // Pad to 3 from the biome pool, preferring species with different element
+    // types than what's already offered. Only duplicate when no other species
+    // are available (e.g. early intro combats with one enemy type).
+    if (this.options.length < 3 && biomePool.length > 0) {
+      const existingTypes = new Set(
+        this.options.map((o) => RIFTLING_TEMPLATES[o.riftlingKey]?.elementType),
+      );
+      const candidates = pickDiverseSpecies(
+        biomePool.filter((k) => !seen.has(k)),
+        3 - this.options.length,
+      );
+      for (const key of candidates) {
+        if (this.options.length >= 3) break;
+        const t = RIFTLING_TEMPLATES[key];
+        if (!t) continue;
+        this.options.push({ riftlingKey: key, texturePrefix: t.texturePrefix, name: t.name });
+        seen.add(key);
+        existingTypes.add(t.elementType);
+      }
+    }
+
+    // If still under 3 (no biome pool or pool exhausted), duplicate so the
+    // player gets multiple stat rolls of the same species.
+    while (this.options.length < 3 && this.options.length > 0) {
+      this.options.push(this.options[this.options.length - 1]);
     }
 
     this.onChoice = onChoice;
@@ -280,22 +311,24 @@ export class RecruitPrompt {
       this.container.add(hit);
     }
 
-    // Skip hint — clickable
-    const skip = this.scene.add
-      .text(W / 2, H - 12, '[ESC] Skip', {
-        fontFamily: 'monospace',
-        fontSize: '10px',
-        color: '#888888',
-      })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
-    skip.on('pointerover', () => skip.setColor('#ffffff'));
-    skip.on('pointerout', () => skip.setColor('#888888'));
-    skip.on('pointerdown', () => {
-      this.hide();
-      this.onChoice(null);
-    });
-    this.container.add(skip);
+    // Skip hint — clickable. Hidden when the caller requires a pick.
+    if (this.allowSkip) {
+      const skip = this.scene.add
+        .text(W / 2, H - 12, '[ESC] Skip', {
+          fontFamily: 'monospace',
+          fontSize: '10px',
+          color: '#888888',
+        })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+      skip.on('pointerover', () => skip.setColor('#ffffff'));
+      skip.on('pointerout', () => skip.setColor('#888888'));
+      skip.on('pointerdown', () => {
+        this.hide();
+        this.onChoice(null);
+      });
+      this.container.add(skip);
+    }
 
     this.container.setVisible(true);
 
@@ -304,6 +337,7 @@ export class RecruitPrompt {
       if (!this.active) return;
 
       if (event.key === 'Escape') {
+        if (!this.allowSkip) return;
         this.hide();
         this.onChoice(null);
         return;

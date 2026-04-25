@@ -1,6 +1,6 @@
 # Into the Rift — Bug Tracker
 
-**Last updated:** 2026-04-12 | QA Session 4 (post-dev Session 4)
+**Last updated:** 2026-04-18 | QA Session 5 (post-dev Session 9)
 
 ---
 
@@ -13,31 +13,33 @@ _No open critical bugs._
 ## Moderate
 
 ### BUG-004 — Physics colliders accumulate across room transitions
-**Status:** Open  
+**Status:** Fixed (Session 9)  
 **File:** `src/scenes/DungeonScene.ts` (`transitionToRoom`, `syncCompanions`, `spawnTrainer`)
 
 `transitionToRoom()` adds a new `trainer → walls` collider on every transition without removing the previous one. `syncCompanions()` does the same per companion — called on transition, on room clear, and from PartyScreen callbacks. After N transitions with a 4-member party, 5N+ redundant colliders are active. Full run through 9 rooms = 40+ colliders.
 
-**Fix:** Store collider references from `physics.add.collider()`; call `physics.world.removeCollider(ref)` before adding new ones.
+**Fix applied:** Store collider refs in `trainerWallCollider` / `companionWallColliders[]`; call `physics.world.removeCollider(ref)` before adding new ones in all three sites (spawnTrainer, syncCompanions, transitionToRoom). Refs reset in `create()` for scene restarts.
 
 ---
 
 ### BUG-005 — All companions KO leaves room in ambiguous state
-**Status:** Open  
-**File:** `src/combat/CombatManager.ts` (`checkCombatEnd`)
+**Status:** Fixed (Session 9)  
+**File:** `src/scenes/DungeonScene.ts`, `src/scenes/GameOverScene.ts`
 
 When all allies die, `this.active = false` (the `TODO` branch). Doors unblock but `onRoomCleared` is never called — `room.cleared` stays false, minimap doesn't update, no recruit prompt, combatHud is not hidden. Player can leave but the room shows locked on the minimap forever.
+
+**Fix applied:** `onPartyWiped` now sets `gameEnding = true` (freezes the entire update loop), fades to black, and transitions to a dedicated `GameOverScene` with Play Again / Title Screen options. Timer expiry (`onTimerExpired`) follows the same path. Both paths are guarded against double-triggers.
 
 ---
 
 ### BUG-006 — `PartyScreen.toggleEquip` silently corrupts `equipped[]`
-**Status:** Open  
+**Status:** Fixed (Session 9)  
 **File:** `src/ui/PartyScreen.ts` (`toggleEquip`)
 
 Clicking an already-equipped move sets `equipped[slot] = -1` then returns before `rebuild()` — data mutates but UI doesn't refresh. In the next combat, `startEncounter` filters `moves[-1]` (undefined) out silently, leaving the riftling with only 1 move equipped.
 
 **Repro:** PartyScreen → riftling with both slots filled → click move in slot 0.  
-**Fix:** Remove the `= -1` mutation from the early-return (un-equip-is-disabled) branch.
+**Fix applied:** Removed the dead `= -1` mutation from the early-return branch. Clicking an already-equipped move now returns immediately without touching `equipped[]`.
 
 ---
 
@@ -53,19 +55,21 @@ Clicking an already-equipped move sets `equipped[slot] = -1` then returns before
 ## Design / Balance Gaps
 
 ### GAP-001 — Timer expires with no consequence
-**Status:** Open
+**Status:** Fixed (Session 9)
 
 `timerSeconds` counts to 0, text turns red, timer event self-destructs — game keeps running. No game-over screen or run-end state.
+
+**Fix applied:** Timer callback now calls `onTimerExpired()`, which freezes gameplay and transitions to GameOverScene with `reason: 'timeout'`.
 
 ---
 
 ### GAP-007 — Temperament is invisible to the player
-**Status:** Open  
+**Status:** Fixed (prior session, confirmed Session 9)  
 **File:** `src/ui/PartyScreen.ts`, `src/ui/RecruitPrompt.ts`
 
 Temperament drives level-up stat growth but is never shown in the UI — not on the party screen detail panel, not on recruit cards. Players can't see it or factor it into decisions.
 
-**Fix:** Show temperament name + boosted/reduced stat label on the party screen and recruit prompt.
+**Fix applied:** PartyScreen shows temperament name in the header row and colors boosted stats green / reduced stats red. RecruitPrompt shows temperament name on each card, with ▲/▼ arrows and colored stats. Already implemented by the time of this audit.
 
 ---
 
@@ -80,6 +84,18 @@ The "initial party is Emberhound" test reads `getParty()` immediately after `wai
 ---
 
 ## Fixed
+
+### QA Session 5
+
+| ID | Description | Fix |
+|---|---|---|
+| BUG-NEW-001 | `?testRoom=` direct-load never exposed `__gameState` | `BootScene.create()` now routes to `Dungeon` when `testRoom` is present |
+| BUG-NEW-002 | Timer frozen for entire intro zone after riftling selection | `onStarterPicked()` unpauses `timerEvent` after setting `starterTrinketPending` |
+| BUG-NEW-003 | `warpToRoom()` crashed with TypeError during active combat | Guarded `warpToRoom` against `combatManager.isActive`; aborts combat cleanly before transitioning |
+| BUG-NEW-004 | Progressive text corruption in starter selection after Play Again | Phaser glyph cache cleared on Dungeon scene restart |
+| BUG-NEW-005 | Game Over screen text rendering corruption | Same fix as BUG-NEW-004 (glyph atlas reset) |
+
+---
 
 ### Session 4
 

@@ -1,6 +1,16 @@
 import { test, expect, Page } from '@playwright/test';
 
 async function waitForGameReady(page: Page) {
+  await page.waitForFunction(
+    () => !!(window as any).__PHASER_GAME__?.scene?.getScene?.('Title'),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => {
+    const game = (window as any).__PHASER_GAME__;
+    game.scene.stop('Title');
+    game.scene.start('Dungeon');
+  });
   await page.waitForFunction(() => !!(window as any).__gameState, null, { timeout: 20_000 });
 }
 
@@ -49,15 +59,16 @@ test.describe('Startup Selection', () => {
     expect(party.active[0].name).toBe('Emberhound');
   });
 
-  test('starter trinket is added to inventory after selection', async ({ page }) => {
+  test('trinket grant is deferred after starter selection', async ({ page }) => {
     await page.goto('/');
     await waitForGameReady(page);
     await dismissTrinketSelect(page);
 
+    // Trinket selection is now deferred until the player reaches the hub
+    // after intro combats — inventory should still be empty at this point
     const trinkets = await gs<any>(page, 'getTrinkets()');
-    // Should have picked one starter trinket
     const total = trinkets.equipped.length + trinkets.bag.length;
-    expect(total).toBeGreaterThanOrEqual(1);
+    expect(total).toBe(0);
   });
 
   test('timer is paused while selection is open', async ({ page }) => {

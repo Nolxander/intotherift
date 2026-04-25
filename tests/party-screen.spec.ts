@@ -5,6 +5,16 @@ async function gameState(page: Page, accessor: string) {
 }
 
 async function waitForGameReady(page: Page) {
+  await page.waitForFunction(
+    () => !!(window as any).__PHASER_GAME__?.scene?.getScene?.('Title'),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => {
+    const game = (window as any).__PHASER_GAME__;
+    game.scene.stop('Title');
+    game.scene.start('Dungeon');
+  });
   await page.waitForFunction(() => !!(window as any).__gameState, null, {
     timeout: 20_000,
   });
@@ -86,10 +96,15 @@ test.describe('Party Screen', () => {
     const currentRoom = await gameState(page, 'getRoom()');
     expect(currentRoom.id).toBe(startRoom.id);
 
-    // Close and verify we can move again
+    // Close and verify we can move again — use warpToRoom for deterministic
+    // room transition instead of relying on walk timing
     await page.keyboard.press('Escape');
     await page.waitForTimeout(100);
-    await holdKey(page, 'w', 2500);
+
+    const dungeon = await gameState(page, 'getDungeon()');
+    const otherRoom = dungeon.rooms.find((r: any) => r.id !== startRoom.id);
+    await page.evaluate((id: number) => (window as any).__gameState.warpToRoom(id), otherRoom.id);
+    await page.waitForTimeout(200);
 
     const afterClose = await gameState(page, 'getRoom()');
     expect(afterClose.id).not.toBe(startRoom.id);
@@ -103,8 +118,8 @@ test.describe('Party Screen', () => {
     const party = await gameState(page, 'getParty()');
     const emberhound = party.active[0];
 
-    expect(emberhound.role).toBe('chaser');
-    expect(emberhound.moves).toHaveLength(3);
+    expect(emberhound.role).toBe('skirmisher');
+    expect(emberhound.moves).toHaveLength(2);
     expect(emberhound.equipped).toEqual([0, 1]);
     expect(emberhound.moves[1].isSignature).toBe(true);
     expect(emberhound.moves[1].name).toBe('Fire Dash');

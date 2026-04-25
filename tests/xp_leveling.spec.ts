@@ -1,6 +1,16 @@
 import { test, expect, Page } from '@playwright/test';
 
 async function waitForGameReady(page: Page) {
+  await page.waitForFunction(
+    () => !!(window as any).__PHASER_GAME__?.scene?.getScene?.('Title'),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => {
+    const game = (window as any).__PHASER_GAME__;
+    game.scene.stop('Title');
+    game.scene.start('Dungeon');
+  });
   await page.waitForFunction(() => !!(window as any).__gameState, null, { timeout: 20_000 });
 }
 
@@ -65,8 +75,8 @@ test.describe('XP & Leveling', () => {
     await waitForGameReady(page);
     await dismissTrinketSelect(page);
 
-    // 20 XP needed for level 1→2
-    const result = await page.evaluate(() => (window as any).__gameState.grantXP(0, 20));
+    // 25 XP needed for level 1→2 (formula: 25 + (level-1)*20)
+    const result = await page.evaluate(() => (window as any).__gameState.grantXP(0, 25));
     expect(result).not.toBeNull();
     expect(result.newLevel).toBe(2);
 
@@ -140,6 +150,6 @@ test.describe('XP & Leveling', () => {
     // Pyreshell should be the tanky anchor: higher HP and defense than Emberhound
     expect(pyreshell.maxHp).toBeGreaterThan(ember.maxHp);
     expect(pyreshell.defense).toBeGreaterThan(ember.defense);
-    expect(pyreshell.role).toBe('anchor');
+    expect(pyreshell.role).toBe('vanguard');
   });
 });

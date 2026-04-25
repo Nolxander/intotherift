@@ -1,6 +1,16 @@
 import { test, expect, Page } from '@playwright/test';
 
 async function waitForGameReady(page: Page) {
+  await page.waitForFunction(
+    () => !!(window as any).__PHASER_GAME__?.scene?.getScene?.('Title'),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => {
+    const game = (window as any).__PHASER_GAME__;
+    game.scene.stop('Title');
+    game.scene.start('Dungeon');
+  });
   await page.waitForFunction(() => !!(window as any).__gameState, null, { timeout: 20_000 });
 }
 
@@ -97,13 +107,13 @@ test.describe('Party Screen', () => {
     const ember = party.active[0];
 
     // Moves system
-    expect(ember.moves).toHaveLength(3);
+    expect(ember.moves).toHaveLength(2);
     expect(ember.moves[0].name).toBe('Ember Strike');
     expect(ember.moves[1].isSignature).toBe(true); // Fire Dash
     expect(ember.equipped).toEqual([0, 1]);
 
     // Role
-    expect(ember.role).toBe('chaser');
+    expect(ember.role).toBe('skirmisher');
   });
 
   test('all riftlings have a role and moves', async ({ page }) => {
@@ -113,7 +123,7 @@ test.describe('Party Screen', () => {
 
     const party = await page.evaluate(() => (window as any).__gameState.getParty());
     for (const r of party.active) {
-      expect(['chaser', 'anchor', 'skirmisher']).toContain(r.role);
+      expect(['vanguard', 'skirmisher', 'striker', 'caster', 'hunter', 'support', 'hexer']).toContain(r.role);
       expect(r.moves.length).toBeGreaterThan(0);
       expect(r.equipped).toHaveLength(2);
     }

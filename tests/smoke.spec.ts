@@ -2,6 +2,16 @@ import { test, expect, Page } from '@playwright/test';
 
 /** Wait until Phaser has booted and DungeonScene is ready. */
 async function waitForGameReady(page: Page) {
+  await page.waitForFunction(
+    () => !!(window as any).__PHASER_GAME__?.scene?.getScene?.('Title'),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => {
+    const game = (window as any).__PHASER_GAME__;
+    game.scene.stop('Title');
+    game.scene.start('Dungeon');
+  });
   await page.waitForFunction(() => !!(window as any).__gameState, null, {
     timeout: 20_000,
   });
@@ -90,7 +100,8 @@ test.describe('Smoke', () => {
     await waitForGameReady(page);
 
     const dungeon = await page.evaluate(() => (window as any).__gameState.getDungeon());
-    expect(dungeon.rooms).toHaveLength(9);
+    // L1 intro dungeon: hub(1) + 5 branches×3(15) + key path(5) + boss(1) + intro(3) = 25
+    expect(dungeon.rooms).toHaveLength(25);
     // Exactly one boss room
     const bossRooms = dungeon.rooms.filter((r: any) => r.template.type === 'boss');
     expect(bossRooms).toHaveLength(1);

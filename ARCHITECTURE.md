@@ -76,11 +76,10 @@ Each dungeon (`src/data/dungeon.ts`) is a central hub room plus branches radiati
 |---|---|---|
 | 0-2 | West wall (top/mid/bot) | Regular branches |
 | 3-5 | East wall (top/mid/bot) | Regular branches |
-| 6 | North wall, left | Key path — locked until `level` regular branches cleared |
-| 7 | North wall, right | Boss — locked until key path cleared (`hasOrb`) |
+| 7 | North wall, center (4 tiles wide) | Boss — locked until `BOSS_UNLOCK_THRESHOLD` regular branches cleared |
 | — | South wall, center | Intro return (walkable into hub, no zone out) |
 
-Regular branches are short forward chains (3 rooms at L1, 4 at L2+) with distinct biome + reward archetypes. The key path is a longer combat gauntlet (5+ rooms) whose terminal grants the orb. The boss is a single-room branch.
+Regular branches are short forward chains (3 rooms at L1, 4 at L2+) with distinct biome + reward archetypes. The boss is a single-room branch. `HubDoorSlot.span` (defaults to 2) controls how many tiles the door occupies along its wall — the boss door uses `span: 4`.
 
 **No-backtrack enforcement** is runtime-only, in `DungeonScene`:
 - `getActiveEdges` + `createDoorZones` skip connections to rooms whose `visited` flag is already set. Since the player can only enter a new room from a visited one, the "way we came" door gets masked as a wall.
@@ -88,8 +87,8 @@ Regular branches are short forward chains (3 rooms at L1, 4 at L2+) with distinc
 - The hub is special-cased in `createDoorZones`: it skips cardinal edge detection entirely and iterates `dungeon.doors[]`, looking up authored tile positions from `hubDoorSlots`. Locked doors get a red overlay, sealed doors get a grey overlay, and neither spawns a walkable zone.
 
 **Progression commit points:**
-- `sealBranchIfLeavingTerminal(prevRoom)` runs at the start of every `transitionToRoom`. If you're leaving a terminal room, the branch is marked cleared, its hub door is sealed, and `hasOrb` is set for the key path. `refreshHubDoorStates()` then recomputes lock state for the key path and boss doors.
-- A fresh dungeon starts with key path + boss doors `locked: true`, which `refreshHubDoorStates()` reconciles against current progress on every call.
+- `sealBranchIfLeavingTerminal(prevRoom)` runs at the start of every `transitionToRoom`. If you're leaving a terminal room, the branch is marked cleared and its hub door is sealed. `refreshHubDoorStates()` then recomputes lock state for the boss door.
+- A fresh dungeon starts with the boss door `locked: true`, which `refreshHubDoorStates()` reconciles against current progress on every call — unlocked once `BOSS_UNLOCK_THRESHOLD` regular branches are cleared.
 
 **Level 1 intro zone:** generated only when `intro` is true (default for level 1). It extends south from the hub via `(0, 3) → (0, 2) → (0, 1) → hub`, using the easiest combat template (fewest enemy spawns) for the two intro combats. The intro is the only place where post-combat recruit prompts run; branch combats have recruiting disabled so recruit-type terminals become the reward.
 
@@ -194,14 +193,8 @@ Collision bodies are placed at the **base** of the sprite (bottom-Y of the visua
 
 ---
 
-## Open Bugs (as of Session 8)
+## Open Bugs (as of Session 9 / QA Run 5)
 
 See `BUGS.md` for full details.
 
-| ID | Summary | File |
-|---|---|---|
-| BUG-004 | Physics colliders accumulate across room transitions | `DungeonScene.ts` |
-| BUG-005 | All-companions-KO leaves room in broken state | `CombatManager.ts` |
-| BUG-006 | `PartyScreen.toggleEquip` silently corrupts `equipped[]` | `PartyScreen.ts` |
-| GAP-001 | Timer expiry has no consequence | `DungeonScene.ts` |
-| GAP-007 | Temperament not shown in UI | `PartyScreen.ts`, `RecruitPrompt.ts` |
+_No open bugs from QA Run 5 — BUG-NEW-001 through BUG-NEW-005 all fixed._

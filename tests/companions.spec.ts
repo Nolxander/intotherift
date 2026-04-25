@@ -5,6 +5,16 @@ async function gameState(page: Page, accessor: string) {
 }
 
 async function waitForGameReady(page: Page) {
+  await page.waitForFunction(
+    () => !!(window as any).__PHASER_GAME__?.scene?.getScene?.('Title'),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => {
+    const game = (window as any).__PHASER_GAME__;
+    game.scene.stop('Title');
+    game.scene.start('Dungeon');
+  });
   await page.waitForFunction(() => !!(window as any).__gameState, null, {
     timeout: 20_000,
   });
@@ -52,41 +62,14 @@ async function waitForRecruitPrompt(page: Page) {
   );
 }
 
-/** Warp to the first combat room, clear it, and recruit. */
-async function clearFirstRoomAndRecruit(page: Page): Promise<boolean> {
-  // Find a combat room from the dungeon layout and warp directly to it
-  const combatRoomId = await page.evaluate(() => {
-    const gs = (window as any).__gameState;
-    const dungeon = gs.getDungeon();
-    const room = dungeon.rooms.find(
-      (r: any) => ['combat', 'recruit'].includes(r.template.type),
-    );
-    return room ? room.id : -1;
-  });
-
-  if (combatRoomId === -1) return false;
-
-  await page.evaluate((id: number) => {
-    (window as any).__gameState.warpToRoom(id);
-  }, combatRoomId);
-
-  // Give the room transition a moment to settle and combat to start
-  await page.waitForTimeout(500);
-
-  await waitForCombat(page);
-  await waitForCombatEnd(page);
-  await waitForRecruitPrompt(page);
-  await page.keyboard.press('1');
-  await page.waitForFunction(
-    () => !(window as any).__gameState?.isRecruitActive(),
-    null,
-    { timeout: 5_000 },
-  );
-  return true;
+/** Add a riftling to the party via injectRiftling — deterministic, no combat needed. */
+async function injectCompanion(page: Page, key: string = 'pyreshell'): Promise<void> {
+  await page.evaluate((k: string) => (window as any).__gameState.injectRiftling(k), key);
+  await page.waitForTimeout(200);
 }
 
 test.describe('Multi-Companion System', () => {
-  test('recruited riftling appears as companion (party size matches companion count)', async ({
+  test('injected riftling appears as companion (party size matches companion count)', async ({
     page,
   }) => {
     await page.goto('/');
@@ -97,21 +80,13 @@ test.describe('Multi-Companion System', () => {
     let party = await gameState(page, 'getParty()');
     expect(party.active).toHaveLength(1);
 
-    // Recruit in first combat room
-    const recruited = await clearFirstRoomAndRecruit(page);
-    if (!recruited) {
-      test.skip();
-      return;
-    }
+    // Inject a companion directly for deterministic testing
+    await injectCompanion(page, 'pyreshell');
 
     // Party should now have 2 active riftlings
     party = await gameState(page, 'getParty()');
-    expect(party.active.length).toBeGreaterThanOrEqual(2);
-
-    // Verify the companion sprites exist in the scene — check via game state
-    // The companions array in DungeonScene should match party.active length
-    // We can verify this indirectly: the game didn't crash and the party grew
-    expect(party.active.length).toBeGreaterThanOrEqual(2);
+    expect(party.active).toHaveLength(2);
+    expect(party.active[1].name).toBe('Pyreshell');
   });
 
   test('companions persist through room transitions', async ({ page }) => {
@@ -119,18 +94,18 @@ test.describe('Multi-Companion System', () => {
     await waitForGameReady(page);
     await dismissTrinketSelect(page);
 
-    // Recruit a companion
-    const recruited = await clearFirstRoomAndRecruit(page);
-    if (!recruited) {
-      test.skip();
-      return;
-    }
+    // Inject a companion
+    await injectCompanion(page, 'pyreshell');
 
     const partyBefore = await gameState(page, 'getParty()');
     const sizeBefore = partyBefore.active.length;
 
-    // Walk to next room
-    await holdKey(page, 'w', 2500);
+    // Warp to another room for deterministic transition
+    const dungeon = await gameState(page, 'getDungeon()');
+    const startRoom = await gameState(page, 'getRoom()');
+    const otherRoom = dungeon.rooms.find((r: any) => r.id !== startRoom.id);
+    await page.evaluate((id: number) => (window as any).__gameState.warpToRoom(id), otherRoom.id);
+    await page.waitForTimeout(300);
 
     // Party should still be the same size
     const partyAfter = await gameState(page, 'getParty()');

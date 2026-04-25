@@ -650,7 +650,7 @@
     "x": 15,
     "y": 17
   },
-  "biome": "dark_grass_cliff",
+  "biome": "dark_lava",
   "decorations": [
     {
       "sprite": "corrupted_tree",
@@ -878,26 +878,6 @@
       "y": 2
     },
     {
-      "sprite": "rift_crystal_shard",
-      "x": 12,
-      "y": 4
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 12,
-      "y": 6
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 17,
-      "y": 4
-    },
-    {
-      "sprite": "rift_crystal_shard",
-      "x": 17,
-      "y": 6
-    },
-    {
       "sprite": "glowing_mushroom",
       "x": 10,
       "y": 2
@@ -1091,6 +1071,26 @@
       "sprite": "glowing_mushroom",
       "x": 23,
       "y": 11
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 17,
+      "y": 8
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 17,
+      "y": 5
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 12,
+      "y": 8
+    },
+    {
+      "sprite": "rift_crystal_shard",
+      "x": 12,
+      "y": 5
     }
   ]
 }

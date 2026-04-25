@@ -1,12 +1,11 @@
 /**
  * Dungeon generation: hub-and-spoke layout.
  *
- * Each dungeon is a central hub room that radiates up to 8 doors:
+ * Each dungeon is a central hub room that radiates up to 7 doors:
  *   - Slots 0-5: regular, player-choice branches (short forward-only
  *     gauntlets ending in a terminal reward room).
- *   - Slot 6:    key-path branch — a longer combat gauntlet. Locked until
- *     `level` regular branches are cleared; clearing it sets hasOrb.
- *   - Slot 7:    boss branch — a single-room fight. Locked until hasOrb.
+ *   - Slot 7:    boss branch — a single-room fight. Locked until the player
+ *     has cleared BOSS_UNLOCK_THRESHOLD regular branches.
  *
  * Level 1 additionally prepends an intro zone (start + 2 easy combats) so
  * new players build a team before reaching the hub's choices.
@@ -34,7 +33,7 @@ import { EliteTeamMember } from './room_templates';
 export type BranchReward = 'elite' | 'recruit' | 'rift_shard';
 
 /** Regular branches are player-chosen; key/boss are special mandatory branches. */
-export type BranchKind = 'regular' | 'key' | 'boss';
+export type BranchKind = 'regular' | 'boss';
 
 /**
  * Biomes eligible for regular branch selection. A branch rolls one biome
@@ -57,15 +56,15 @@ const BRANCH_BIOMES: Biome[] = [
  * not type filters. Keep in sync with the Biome union in room_templates.ts. */
 const BIOME_SPECIES: Record<Biome, string[]> = {
   dungeon:            [],
-  dark_lava:          ['emberhound', 'pyreshell', 'grindscale'],
+  dark_lava:          ['emberhound', 'pyreshell', 'grindscale', 'cindertail', 'smolderpaw'],
   grass_water:        ['tidecrawler', 'rivelet', 'lumoth'],
-  dark_grass_water:   ['tidecrawler', 'rivelet'],
+  dark_grass_water:   ['tidecrawler', 'rivelet', 'wavecaller', 'dewspine', 'lumoth'],
   grass_cliff:        ['tremorhorn', 'grindscale'],
-  dark_grass_cliff:   ['tremorhorn', 'grindscale'],
-  dark_forest:        ['barkbiter', 'gloomfang', 'solarglare'],
-  dark_plains_bluff:  ['gloomfang', 'hollowcrow', 'emberhound'],
-  dark_badlands:      ['pyreshell', 'hollowcrow', 'grindscale'],
-  dark_jungle:        ['gloomfang', 'thistlebound', 'tremorhorn'],
+  dark_grass_cliff:   ['tremorhorn', 'grindscale', 'dawnstrike', 'sunfleece', 'crestshrike'],
+  dark_forest:        ['barkbiter', 'gloomfang', 'solarglare', 'veilseer', 'rootlash'],
+  dark_plains_bluff:  ['gloomfang', 'hollowcrow', 'emberhound', 'crestshrike', 'dawnstrike'],
+  dark_badlands:      ['pyreshell', 'hollowcrow', 'grindscale', 'bogweft', 'curseclaw'],
+  dark_jungle:        ['gloomfang', 'thistlebound', 'tremorhorn', 'nettlehide', 'bogweft'],
   dark_void:          [],
 };
 
@@ -82,6 +81,12 @@ export function speciesForBiome(biome: Biome | undefined): string[] {
 export interface BranchArchetype {
   biome: Biome;
   reward: BranchReward;
+  /**
+   * If true, the branch's penultimate room is an elite fight; the terminal
+   * is still the reward. Rolled ~50% of regular branches. Ignored when the
+   * branch is too short to fit both an elite and a reward (depth < 2).
+   */
+  hasElite?: boolean;
 }
 
 export interface Branch {
@@ -140,6 +145,12 @@ export interface DungeonRoom {
    * two rooms of a fresh run gentle while the player builds a team.
    */
   introSpawnCount?: number;
+  /**
+   * For rooms whose exit doors should render with a non-portal sprite (e.g. the
+   * intro zone's stairs descending into the rift). When set, the door overlay
+   * uses this decoration key instead of the biome portal.
+   */
+  doorOverlay?: string;
   cleared: boolean;
   visited: boolean;
 }
@@ -150,24 +161,21 @@ export interface Dungeon {
   hubRoomId: number;
   /** Regular, player-choice branches radiating from the hub (slots 0-5). */
   branches: Branch[];
-  /** Special key-path branch. Terminal clear sets hasOrb and unlocks boss. */
-  keyPath: Branch;
-  /** Single-room boss branch. Locked until hasOrb === true. */
+  /** Single-room boss branch. Locked until BOSS_UNLOCK_THRESHOLD branches cleared. */
   boss: Branch;
-  /** All hub exits (regular branches + key path + boss), keyed by slot. */
+  /** All hub exits (regular branches + boss), keyed by slot. */
   doors: HubDoor[];
   currentRoomId: number;
   /** Which branch the player is currently inside; null when in the hub. */
   currentBranchId: number | null;
-  /** Set true when the key-path terminal is cleared. Unlocks the boss door. */
-  hasOrb: boolean;
-  /** 1-indexed level. 3 levels total; level 3 clear = victory. */
+  /** 1-indexed level. Single level; boss clear = victory. */
   level: number;
 }
 
-/** Reserved slot indices for the special branches on the hub's north wall. */
-export const KEY_PATH_SLOT = 6;
+/** Reserved slot index for the boss door on the hub's north wall. */
 export const BOSS_SLOT = 7;
+/** Number of regular branches the player must clear to unlock the boss. */
+export const BOSS_UNLOCK_THRESHOLD = 2;
 
 // ---------- Test helper (direct-load debug path) ----------
 
@@ -186,11 +194,11 @@ export function generateTestDungeon(template: RoomTemplate): Dungeon {
     cleared: true,
     visited: true,
   };
-  // Synthetic empty key/boss branches so downstream code can assume they
-  // exist. They're unreachable in test-room mode.
-  const emptyBranch: Branch = {
+  // Synthetic empty boss branch so downstream code can assume it
+  // exists. It's unreachable in test-room mode.
+  const emptyBoss: Branch = {
     id: -1,
-    kind: 'key',
+    kind: 'boss',
     archetype: { biome: 'dungeon', reward: 'rift_shard' },
     roomIds: [],
     entryRoomId: 0,
@@ -201,12 +209,10 @@ export function generateTestDungeon(template: RoomTemplate): Dungeon {
     rooms: [room],
     hubRoomId: 0,
     branches: [],
-    keyPath: { ...emptyBranch, kind: 'key' },
-    boss: { ...emptyBranch, kind: 'boss' },
+    boss: emptyBoss,
     doors: [],
     currentRoomId: 0,
     currentBranchId: null,
-    hasOrb: false,
     level: 1,
   };
 }
@@ -251,7 +257,15 @@ function pickEasiestTemplate(type: RoomType): RoomTemplate {
   )[0];
 }
 
-const BRANCH_REWARDS: BranchReward[] = ['elite', 'recruit', 'rift_shard'];
+/**
+ * Terminal reward pool for regular branches. Elite is not a terminal reward —
+ * it's an optional penultimate combat encounter (rolled via hasElite) that
+ * precedes one of these reward rooms.
+ */
+const TERMINAL_REWARDS: BranchReward[] = ['recruit', 'rift_shard'];
+
+/** Probability that a regular branch has an elite fight before its reward. */
+const ELITE_CHANCE = 0.5;
 
 /**
  * Procedurally build a 3-member elite team from the theme's species pool.
@@ -270,13 +284,48 @@ function buildBiomeEliteTeam(biome: Biome): EliteTeamMember[] {
 }
 
 /**
- * Roll 1-3 unique species from the theme pool for a recruit terminal. If the
- * theme has fewer than 3 species, returns the full pool shuffled.
+ * Pick 3 unique species from the biome pool, biased toward different element
+ * types so the player gets variety. Falls back to repeats only when the pool
+ * itself has fewer than 3 species.
  */
 function buildRecruitOfferings(biome: Biome): string[] {
-  const pool = shuffle([...speciesForBiome(biome)]);
-  const count = Math.min(pool.length, 1 + Math.floor(Math.random() * 3));
-  return pool.slice(0, Math.max(1, count));
+  return pickDiverseSpecies(speciesForBiome(biome), 3);
+}
+
+/**
+ * Select `count` species from `pool`, preferring species whose element type
+ * hasn't been picked yet. Allows repeats only when the pool is exhausted.
+ */
+export function pickDiverseSpecies(pool: string[], count: number): string[] {
+  if (pool.length === 0) return [];
+  const shuffled = shuffle([...pool]);
+  const picks: string[] = [];
+  const usedTypes = new Set<string>();
+  const usedKeys = new Set<string>();
+
+  for (const key of shuffled) {
+    if (picks.length >= count) break;
+    const t = RIFTLING_TEMPLATES[key];
+    if (!t) continue;
+    if (!usedTypes.has(t.elementType)) {
+      picks.push(key);
+      usedTypes.add(t.elementType);
+      usedKeys.add(key);
+    }
+  }
+
+  for (const key of shuffled) {
+    if (picks.length >= count) break;
+    if (usedKeys.has(key)) continue;
+    picks.push(key);
+    usedKeys.add(key);
+  }
+
+  while (picks.length < count && picks.length < pool.length) {
+    picks.push(shuffled[picks.length % shuffled.length]);
+  }
+
+  return picks;
 }
 
 /** Room type used for each terminal, keyed by reward. */
@@ -406,14 +455,20 @@ function generateBranch(
   let cx = entryRoom.gridX;
   let cy = entryRoom.gridY;
 
-  // Subsequent combat rooms.
+  // Subsequent combat rooms. When hasElite is set, the last pre-terminal slot
+  // becomes an elite encounter instead of a regular combat room.
+  const eliteIdx = archetype.hasElite && depth >= 2 ? depth - 2 : -1;
   for (let i = 1; i < depth - 1; i++) {
     cx += step.dx;
     cy += step.dy;
-    const r = addRoom(ctx, 'combat', cx, cy, {
+    const roomType: RoomType = i === eliteIdx ? 'elite' : 'combat';
+    const r = addRoom(ctx, roomType, cx, cy, {
       biome: archetype.biome,
       branchId,
     });
+    if (roomType === 'elite') {
+      r.eliteTeamOverride = buildBiomeEliteTeam(archetype.biome);
+    }
     connect(prev, r);
     roomIds.push(r.id);
     prev = r;
@@ -437,6 +492,8 @@ function generateBranch(
   // Attach themed payloads to the terminal room.
   const terminalRoom = ctx.rooms[roomIds[roomIds.length - 1]];
   if (archetype.reward === 'elite') {
+    // Only possible when depth === 1 (single-room branch). hasElite is
+    // ignored in that case — there's no room for both fight and reward.
     terminalRoom.eliteTeamOverride = buildBiomeEliteTeam(archetype.biome);
   } else if (archetype.reward === 'recruit') {
     terminalRoom.recruitOfferings = buildRecruitOfferings(archetype.biome);
@@ -456,66 +513,13 @@ function generateBranch(
 }
 
 /**
- * Build the key-path branch: a longer, combat-only gauntlet ending in a
- * terminal "rift shard" room that grants the orb. Entry room sits directly
- * north of the hub at (0,-1), chain extends further north in column x=0.
- * Length scales with level (L1=5 rooms, L2=6, L3=7).
- */
-function generateKeyPath(
-  ctx: BuildCtx,
-  branchId: number,
-  hub: DungeonRoom,
-  level: number,
-): Branch {
-  const depth = 4 + level; // L1=5, L2=6, L3=7
-  const biome: Biome = 'dark_lava';
-  const roomIds: number[] = [];
-
-  let cx = 0;
-  let cy = -1;
-  const entry = addRoom(ctx, 'combat', cx, cy, { biome, branchId });
-  connect(hub, entry);
-  roomIds.push(entry.id);
-
-  let prev = entry;
-  for (let i = 1; i < depth - 1; i++) {
-    cy -= 1;
-    const r = addRoom(ctx, 'combat', cx, cy, { biome, branchId });
-    connect(prev, r);
-    roomIds.push(r.id);
-    prev = r;
-  }
-
-  // Terminal — the "orb shrine". Uses rift_shard template as the visual
-  // placeholder; the scene marks dungeon.hasOrb when this branch seals.
-  cy -= 1;
-  const terminal = addRoom(ctx, 'rift_shard', cx, cy, {
-    biome,
-    branchId,
-    terminal: true,
-  });
-  connect(prev, terminal);
-  roomIds.push(terminal.id);
-
-  return {
-    id: branchId,
-    kind: 'key',
-    archetype: { biome, reward: 'rift_shard' },
-    roomIds,
-    entryRoomId: entry.id,
-    terminalRoomId: terminal.id,
-    cleared: false,
-  };
-}
-
-/**
  * Build the boss branch: a single boss room floating at an isolated grid
  * position. Accessed only via the hub's boss door zone and exited via the
  * standard terminal-teleport back to hub.
  */
 function generateBoss(ctx: BuildCtx, branchId: number, hub: DungeonRoom): Branch {
   const biome: Biome = 'dark_lava';
-  // Park the boss far off-grid so it doesn't collide with key path chain.
+  // Park the boss far off-grid so it doesn't collide with any branch chain.
   const bossRoom = addRoom(ctx, 'boss', 10, -10, {
     biome,
     branchId,
@@ -555,6 +559,7 @@ function generateBoss(ctx: BuildCtx, branchId: number, hub: DungeonRoom): Branch
  */
 function generateIntroZone(ctx: BuildCtx, hub: DungeonRoom): DungeonRoom {
   const introStart = addRoom(ctx, 'start', 0, 3);
+  introStart.doorOverlay = 'rift_stairs_down';
 
   // Each intro room rolls its own biomed combat template so the tileset +
   // wild species pool match. Skip the default-biome stubs so we pick from the
@@ -572,6 +577,7 @@ function generateIntroZone(ctx: BuildCtx, hub: DungeonRoom): DungeonRoom {
     cleared: false,
     visited: false,
     introSpawnCount: 2,
+    doorOverlay: 'rift_stairs_down',
   };
   ctx.rooms.push(combat1);
 
@@ -584,6 +590,7 @@ function generateIntroZone(ctx: BuildCtx, hub: DungeonRoom): DungeonRoom {
     cleared: false,
     visited: false,
     introSpawnCount: 4,
+    doorOverlay: 'rift_stairs_down',
   };
   ctx.rooms.push(combat2);
 
@@ -598,15 +605,15 @@ function generateIntroZone(ctx: BuildCtx, hub: DungeonRoom): DungeonRoom {
  * Generate a hub-and-spoke dungeon.
  *
  * A central hub room hosts regular branch doors (5 for L1, 6 otherwise),
- * plus a key-path branch and a boss branch on the hub's north wall. Each
- * regular branch is a short forward-only chain ending in a terminal reward.
- * Level 1 additionally prepends an intro zone (start + 2 easy combats) so
- * new players build a team before reaching the hub's choices.
+ * plus a boss door on the hub's north wall. Each regular branch is a short
+ * forward-only chain ending in a terminal reward. Level 1 additionally
+ * prepends an intro zone (start + 2 easy combats) so new players build a
+ * team before reaching the hub's choices.
  *
  * Branch count:
- *   - L1 with intro: 5 regular branches (slots 0-4)
- *   - L2+ no intro:  6 regular branches (slots 0-5)
- *   + key path (slot 6) and boss (slot 7) in all cases.
+ *   - 6 regular branches (slots 0-5) at all levels
+ *   + boss (slot 7) in all cases, unlocked after BOSS_UNLOCK_THRESHOLD
+ *   regular branches are cleared.
  */
 export function generateDungeon(
   opts: { level?: number; branchCount?: number; intro?: boolean } = {},
@@ -619,7 +626,7 @@ export function generateDungeon(
   // no-intro mode can both use the full slot pool.
   const slotPool = [0, 1, 2, 3, 4, 5];
 
-  const defaultBranchCount = intro ? 5 : 6;
+  const defaultBranchCount = 6;
   const branchCount = Math.min(
     opts.branchCount ?? defaultBranchCount,
     slotPool.length,
@@ -634,7 +641,7 @@ export function generateDungeon(
   const biomes = shuffle([...BRANCH_BIOMES]).slice(0, branchCount);
   const rewards: BranchReward[] = [];
   for (let i = 0; i < branchCount; i++) {
-    rewards.push(BRANCH_REWARDS[i % BRANCH_REWARDS.length]);
+    rewards.push(TERMINAL_REWARDS[i % TERMINAL_REWARDS.length]);
   }
   shuffle(rewards);
 
@@ -644,31 +651,25 @@ export function generateDungeon(
   const branches: Branch[] = [];
   const doors: HubDoor[] = [];
   for (let i = 0; i < branchCount; i++) {
-    const archetype: BranchArchetype = { biome: biomes[i], reward: rewards[i] };
+    const archetype: BranchArchetype = {
+      biome: biomes[i],
+      reward: rewards[i],
+      hasElite: Math.random() < ELITE_CHANCE,
+    };
     const slot = slotPool[i];
     const branch = generateBranch(ctx, i, archetype, hub, slot, depth);
     branches.push(branch);
     doors.push({ branchId: branch.id, slot, sealed: false, locked: false });
   }
 
-  // Key path branch — longer combat gauntlet, locked until the player
-  // clears `level` regular branches (L1=1, L2=2, L3=3).
-  const keyPath = generateKeyPath(ctx, branchCount, hub, level);
-  doors.push({
-    branchId: keyPath.id,
-    slot: KEY_PATH_SLOT,
-    sealed: false,
-    locked: true, // unlocked at runtime when enough branches are cleared
-  });
-
-  // Boss branch — single room, locked until the key path terminal is
-  // cleared (hasOrb === true).
-  const boss = generateBoss(ctx, branchCount + 1, hub);
+  // Boss branch — single room, locked until the player clears
+  // BOSS_UNLOCK_THRESHOLD regular branches.
+  const boss = generateBoss(ctx, branchCount, hub);
   doors.push({
     branchId: boss.id,
     slot: BOSS_SLOT,
     sealed: false,
-    locked: true, // unlocked at runtime when hasOrb is set
+    locked: true, // unlocked at runtime when enough branches are cleared
   });
 
   // Intro zone: extends south from the hub. Player spawns at intro_start.
@@ -678,12 +679,10 @@ export function generateDungeon(
     rooms: ctx.rooms,
     hubRoomId: hub.id,
     branches,
-    keyPath,
     boss,
     doors,
     currentRoomId: spawnRoom.id,
     currentBranchId: null,
-    hasOrb: false,
     level,
   };
 }

@@ -207,6 +207,88 @@
       "local_path": "assets/characters/crestshrike",
       "imported_at": "2026-04-15T03:03:11.430522+00:00",
       "notes": "Earth hunter riftling"
+    },
+    {
+      "registry_key": "rootlash",
+      "library_asset_id": "5fa9d3ce-2a6b-4210-96d7-278d52863145",
+      "asset_type": "creature",
+      "local_path": "assets/creatures/rootlash",
+      "imported_at": "2026-04-16T01:41:52.817569+00:00",
+      "notes": "Nature striker riftling - rootlash"
+    },
+    {
+      "registry_key": "smolderpaw",
+      "library_asset_id": "24177893-5d83-4b03-8eeb-c56e0d35bfe7",
+      "asset_type": "creature",
+      "local_path": "assets/creatures/smolderpaw",
+      "imported_at": "2026-04-16T01:42:05.289591+00:00",
+      "notes": "Fire hunter riftling - smolderpaw"
+    },
+    {
+      "registry_key": "curseclaw",
+      "library_asset_id": "4e9583e1-1414-4f0d-a788-80424afaa351",
+      "asset_type": "creature",
+      "local_path": "assets/creatures/curseclaw",
+      "imported_at": "2026-04-16T01:42:29.784489+00:00",
+      "notes": "Dark hexer riftling - curseclaw"
+    },
+    {
+      "registry_key": "sunfleece",
+      "library_asset_id": "24a3ca52-eb40-462f-a6a5-54d54e9c5c90",
+      "asset_type": "creature",
+      "local_path": "assets/creatures/sunfleece",
+      "imported_at": "2026-04-16T01:42:31.773987+00:00",
+      "notes": "Light support riftling - sunfleece"
+    },
+    {
+      "registry_key": "rift_tyrant",
+      "library_asset_id": "de17e57a-876e-4631-b8e3-ead66e4294a4",
+      "asset_type": "character",
+      "local_path": "assets/characters/rift-tyrant",
+      "imported_at": "2026-04-17T14:51:14.418280+00:00"
+    },
+    {
+      "registry_key": "rift_portal",
+      "library_asset_id": "8acc56e2-f9f5-4e9d-8aac-e4a99a9e0e95",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/rift-portal",
+      "imported_at": "2026-04-19T14:52:31.680208+00:00"
+    },
+    {
+      "registry_key": "cliff_portal",
+      "library_asset_id": "cdab3d42-0128-4c16-b438-a1e30ccb0b73",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/cliff-portal",
+      "imported_at": "2026-04-19T15:02:25.699387+00:00"
+    },
+    {
+      "registry_key": "forest_portal",
+      "library_asset_id": "978645b3-1f14-42e4-9de1-42c5f05c4a84",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/forest-portal",
+      "imported_at": "2026-04-19T15:17:24.075794+00:00"
+    },
+    {
+      "registry_key": "rift_stairs_down",
+      "library_asset_id": "e93c0feb-98ff-4434-a763-e9a7dcaeb9bb",
+      "asset_type": "map_object",
+      "local_path": "assets/objects/rift-stairs-down",
+      "imported_at": "2026-04-19T16:06:31.009714+00:00"
+    },
+    {
+      "registry_key": "rift_elite",
+      "library_asset_id": "ccff735d-773e-4171-87e2-12b55e14e54e",
+      "asset_type": "creature",
+      "local_path": "assets/creatures/rift-elite",
+      "imported_at": "2026-04-19T23:30:37.042470+00:00",
+      "notes": "Rift Elite"
+    },
+    {
+      "registry_key": "rift_core",
+      "library_asset_id": "98cf02a2-5e80-433c-95aa-90939d6be784",
+      "asset_type": "character",
+      "local_path": "assets/characters/rift-core",
+      "imported_at": "2026-04-25T16:34:42.262047+00:00"
     }
   ]
 }

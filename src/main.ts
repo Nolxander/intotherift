@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
+import { TitleScene } from './scenes/TitleScene';
 import { DungeonScene } from './scenes/DungeonScene';
+import { GameOverScene } from './scenes/GameOverScene';
+import { VictoryScene } from './scenes/VictoryScene';
 
 // Allow forcing Canvas renderer via `?canvas=1` — useful for headless
 // browsers and testing environments where WebGL context is unstable.
@@ -22,7 +25,12 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, DungeonScene],
+  scene: [BootScene, TitleScene, DungeonScene, GameOverScene, VictoryScene],
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+
+// Expose for dev tools / testing
+if (import.meta.env.DEV) {
+  (window as any).__PHASER_GAME__ = game;
+}

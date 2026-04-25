@@ -678,6 +678,72 @@ Modelled on `RecruitPrompt`: a single overlay container at depth 500, event-base
 
 ---
 
+## Session 11 — April 17, 2026
+
+### What was built
+
+**Multi-level progression — runs can actually end now**
+
+Session 9 left Stage 4 deferred: after clearing the L1 boss, the player was stranded in a fully-sealed hub with no way to advance. The run had no win state. This session closes that loop.
+
+- **`sealBranchIfLeavingTerminal(room)` now returns a signal** (`'victory' | 'advance' | null`) instead of `void`. Non-terminal and non-boss terminal clears still return `null`. A boss clear returns `'advance'` when `dungeon.level < 3` and `'victory'` at `dungeon.level === 3`. Caller drives the flow.
+- **`transitionToRoom` reads the signal before locking in the target room.** On `'victory'` it calls the new `launchVictory()` and returns early. On `'advance'` it regenerates the dungeon via `generateDungeon({ level: nextLevel })`, refreshes hub door states, fully heals active + bench riftlings, refills the timer to 360s, and redirects the transition to the new `hubRoomId`. Party, trinkets, XP, and levels all carry over. A `Level N` banner shows after the flow completes.
+- **Why regenerate instead of reusing the existing dungeon?** Simpler than rewiring a live dungeon's branches/biomes/elite pools in place, and the hub-and-spoke layout is cheap enough to rebuild (single-digit ms). Also means each level rolls fresh biome/reward combinations, which is the behavior the GDD's "3 distinct levels" scope asks for anyway.
+
+**Victory scene** (`src/scenes/VictoryScene.ts`, new file, registered in `main.ts`)
+
+Mirrors the `GameOverScene` structure and fade-in timing.
+
+- Title: "RIFT SEALED" in gold.
+- Run summary: time remaining (mm:ss), total riftlings in party + bench, strongest riftling name + level.
+- Buttons: Play Again (restarts the Dungeon scene) and Title Screen (back to main menu). Keyboard: SPACE/ENTER to replay, ESC for title.
+- Data shape: `VictoryData { timeRemaining, partySize, strongestRiftling, strongestLevel }` — computed at launch time in `DungeonScene.launchVictory()` so the scene is a pure consumer.
+
+**Test helper fix — every spec was silently broken since TitleScene was added**
+
+Discovered during Session 11 playtesting. Every `waitForGameReady(page)` helper was calling `page.waitForFunction(() => !!window.__gameState)` and timing out at 20s. Root cause: `__gameState` is only set in `DungeonScene.create()`, but `TitleScene` is the first scene in `main.ts`'s scene array — the dev server boots into Title, which blocks `__gameState` forever without a SPACE press. Every spec that called `waitForGameReady` has been failing at step one since Title landed.
+
+- **Fix** (12 spec files): `waitForGameReady` now waits on `__PHASER_GAME__` (also exposed in main.ts, in `import.meta.env.DEV`), then does `game.scene.stop('Title'); game.scene.start('Dungeon')` via `page.evaluate`, then waits for `__gameState`.
+- **Why scene manipulation instead of pressing SPACE?** Canvas focus is flaky in headless Chromium — keypresses silently miss the listener about 50% of the time. Going through the Phaser scene manager directly is deterministic.
+- **Coverage**: 47 tests pass post-fix (2 pre-existing screenshot drifts unrelated to this change).
+
+**New test: `tests/level_progression.spec.ts`**
+
+Validates the full L1 → L2 → L3 → Victory flow end-to-end. Walks the player into the boss room and back to the hub (the seal commit path) three times. Asserts:
+
+- After seal #1: `dungeon.level === 2`, boss branch not cleared in the new dungeon, current room is hub.
+- After seal #2: `dungeon.level === 3`.
+- After seal #3: `Victory` scene is active on the Phaser game manager.
+
+Uses direct warp rather than real combat — the seal logic doesn't check combat state, so the shortcut is equivalent for this test. Runs in ~5s.
+
+### Current state of the game
+
+- Runs are winnable. Clearing the L1 boss regenerates into L2 (full HP + fresh 6-minute timer). Clearing L2 regenerates into L3. Clearing L3 transitions to a Victory scene with the run summary.
+- Party / bench / trinkets / XP all carry across level boundaries; HP and clock refill so the player goes into each level fresh.
+- All previously-failing Playwright specs are back online — the harness is usable for regression tests again.
+
+### Deferred / known rough edges
+
+- **Timer refill is a flat 360s per level.** GDD hints at 5–7 min scaling; 6 min per level is inside that range but not tuned for difficulty. Adjust after playtesting L3.
+- **No level banner screen.** Currently just a `showMessage` toast on hub entry. A proper "LEVEL 2 / 3" title card with a 1-2s pause would help the player register the transition. Cosmetic.
+- **Boss-room entry from another dungeon's grid doesn't produce a perfect spawn position.** Because `prevRoom` from the old dungeon's grid gets compared to the new hub's grid in `getEntrySpawn`, the player may spawn at the template default rather than a door. Works in practice (player lands in a walkable tile) but not pretty. Could be polished by passing a "from-level-advance" flag that forces center-spawn.
+- **`tests/smoke.spec.ts` snapshot `boot-dungeon.png` and `tests/synergy.spec.ts` `synergy-hud` are both stale** — look like they predate session 5–10 visual changes. Need regeneration via `npm run test:update-snapshots` once the current state is signed off.
+- BUG-004 / BUG-005 / BUG-006 were all marked Fixed in Session 9 updates to `BUGS.md` — those entries are still valid. GAP-008 (smoke test reads pre-selection party) remains open.
+
+### Remaining jam-ship blockers (from the ship-readiness audit)
+
+| Priority | Item | Status |
+|---|---|---|
+| P0 | L1 → L2 → L3 → Victory | **Done this session** |
+| P0 | Vibe Jam widget smoke test (`index.html:14` embed) | Open |
+| P1 | Audio (0 sounds in codebase right now) | Open |
+| P1 | TitleScene control hints mention Space/R/Q commands that aren't actually bound | Open |
+| P1 | SynergyHUD depth vs CombatHUD — visibility during combat | Open |
+| P2 | Minimap rendering on hub-and-spoke layout | Open (cosmetic, Session 9 noted) |
+
+---
+
 ## Full Riftling Roster
 
 ### EMBERHOUND — Fire / Chaser
