@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 
-const STORAGE_KEY = 'intotherift:volume:v2';
+const STORAGE_KEY = 'intotherift:volume:v3';
 const TRACK_W = 50;
 const TRACK_H = 3;
 const HANDLE_W = 4;
