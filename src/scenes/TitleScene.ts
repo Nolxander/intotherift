@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { applyStoredVolume, createVolumeWidget } from '../ui/VolumeWidget';
 import { playWalkOrStatic } from '../data/anims';
+import { areDeferredAssetsReady } from './BootScene';
 
 const W = 480;
 const H = 320;
@@ -338,6 +339,27 @@ export class TitleScene extends Phaser.Scene {
   }
 
   private startGame(): void {
-    this.scene.start('Dungeon');
+    if (areDeferredAssetsReady()) {
+      this.scene.start('Dungeon');
+      return;
+    }
+
+    const loadingText = this.add.text(240, 210, 'Loading...', {
+      fontFamily: 'monospace',
+      fontSize: '10px',
+      color: '#7a6898',
+    }).setOrigin(0.5).setDepth(100);
+
+    const check = this.time.addEvent({
+      delay: 100,
+      loop: true,
+      callback: () => {
+        if (areDeferredAssetsReady()) {
+          check.destroy();
+          loadingText.destroy();
+          this.scene.start('Dungeon');
+        }
+      },
+    });
   }
 }
