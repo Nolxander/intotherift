@@ -26,6 +26,7 @@ jobs:
       - run: npm ci
       - run: npx vite build
       - run: cp -r assets/tiles assets/sprites assets/objects assets/audio assets/characters assets/creatures assets/rooms dist/assets/
+      - run: echo "intotherift.riftling.com" > dist/CNAME
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
