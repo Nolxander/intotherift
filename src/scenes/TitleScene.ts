@@ -42,7 +42,9 @@ export class TitleScene extends Phaser.Scene {
     this.sound.removeAll();
     if (this.cache.audio.exists('music_title')) {
       const startMusic = () => {
-        this.sound.play('music_title', { loop: true, volume: 0.5 });
+        if (this.scene.isActive()) {
+          this.sound.play('music_title', { loop: true, volume: 0.5 });
+        }
       };
       if (this.sound.locked) {
         this.sound.once(Phaser.Sound.Events.UNLOCKED, startMusic);
@@ -337,6 +339,9 @@ export class TitleScene extends Phaser.Scene {
   }
 
   private startGame(): void {
+    this.sound.removeAllListeners(Phaser.Sound.Events.UNLOCKED);
+    this.sound.stopAll();
+
     if (areDeferredAssetsReady()) {
       this.scene.start('Dungeon');
       return;
