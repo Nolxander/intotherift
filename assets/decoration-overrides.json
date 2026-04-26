@@ -1,0 +1,19 @@
+{
+  "tall_grass_dark": {
+    "displaySize": 20,
+    "collides": false,
+    "yOffset": 6
+  },
+  "corrupted_tree": {
+    "displaySize": 64,
+    "collides": true,
+    "collisionWidth": 26,
+    "collisionHeight": 19
+  },
+  "twisted_dark_tree": {
+    "displaySize": 48,
+    "collides": true,
+    "collisionWidth": 8,
+    "collisionHeight": 6
+  }
+}
