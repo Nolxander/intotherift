@@ -216,6 +216,9 @@ export class DungeonScene extends Phaser.Scene {
   private riftShardSelecting = false;
   private riftShardUI: Phaser.GameObjects.Container | null = null;
 
+  // Teleport pad — visual portal in terminal rooms for returning to the hub
+  private teleportPad: { zone: Phaser.GameObjects.Zone; visual: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text } | null = null;
+
   // Recruit gathering — 1-3 stationary riftling NPCs in a recruit terminal.
   // Walking near them opens the RecruitPrompt with those species as options.
   private recruitGathering: {
@@ -374,6 +377,7 @@ export class DungeonScene extends Phaser.Scene {
     this.spawnHealingSpring();
     this.spawnRiftShard();
     this.spawnRecruitGathering();
+    this.spawnTeleportPad();
 
     // Starter riftling selection. Two modes — the player's last choice is
     // persisted in localStorage and a top-left toggle lets them flip.
@@ -552,6 +556,7 @@ export class DungeonScene extends Phaser.Scene {
     this.bossDoorCenter = null;
     this.bossDoorLabelVisible = false;
     this.recruitGathering = null;
+    this.teleportPad = null;
     this.walls.clear(true, true);
     this.doorZones = [];
     this.tileEntries = [];
@@ -2028,6 +2033,74 @@ export class DungeonScene extends Phaser.Scene {
     }
   }
 
+  private spawnTeleportPad(): void {
+    const room = this.currentRoom;
+    if (!room.terminal) return;
+    if (!room.cleared) return;
+
+    const tmpl = room.template;
+    const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
+    // Offset below center so the pad doesn't overlap recruit NPCs or other
+    // center-placed objects.
+    const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2 + 3 * TILE;
+    const radius = 18;
+
+    const gfx = this.add.graphics().setDepth(0);
+
+    // Outer ring — dark indigo
+    gfx.fillStyle(0x1a0a30, 0.8);
+    gfx.fillCircle(cx, cy, radius + 2);
+    gfx.lineStyle(1, 0x7744cc, 0.9);
+    gfx.strokeCircle(cx, cy, radius + 2);
+    // Mid fill — swirling violet
+    gfx.fillStyle(0x332266, 0.65);
+    gfx.fillCircle(cx, cy, radius);
+    // Inner glow — cyan-purple
+    gfx.fillStyle(0x6644bb, 0.5);
+    gfx.fillCircle(cx, cy, radius * 0.65);
+    // Bright core
+    gfx.fillStyle(0xaa88ff, 0.6);
+    gfx.fillCircle(cx, cy, radius * 0.3);
+
+    this.tweens.add({
+      targets: gfx,
+      alpha: { from: 0.65, to: 1 },
+      duration: 1000,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    const label = this.add
+      .text(cx, cy - radius - 6, 'Return to Hall', {
+        fontFamily: 'monospace',
+        fontSize: '8px',
+        color: '#bb99ff',
+        stroke: '#000000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5)
+      .setDepth(100);
+
+    const zone = this.add.zone(cx, cy, radius * 2, radius * 2);
+    this.physics.add.existing(zone, true);
+
+    this.teleportPad = { zone, visual: gfx, label };
+  }
+
+  private checkTeleportPad(): void {
+    if (!this.teleportPad) return;
+    if (this.combatManager?.isActive) return;
+
+    const trainerBounds = this.trainer.getBounds();
+    const zoneBounds = this.teleportPad.zone.getBounds();
+
+    if (Phaser.Geom.Rectangle.Overlaps(trainerBounds, zoneBounds)) {
+      this.teleportPad = null;
+      this.transitionToRoom(this.dungeon.hubRoomId);
+    }
+  }
+
   private activateRiftCore(): void {
     const core = this.riftCoreSprite;
     if (!core) return;
@@ -2609,8 +2682,8 @@ export class DungeonScene extends Phaser.Scene {
     container.add(subtitleLabel);
 
     // Trinket cards
-    const cardW = 140;
-    const cardH = 120;
+    const cardW = 150;
+    const cardH = 130;
     const gap = 20;
     const totalW = choices.length * cardW + (choices.length - 1) * gap;
     const startX = 240 - totalW / 2 + cardW / 2;
@@ -2642,7 +2715,7 @@ export class DungeonScene extends Phaser.Scene {
       const nameText = this.add
         .text(cx, cy - cardH / 2 + 46, trinket.name, {
           fontFamily: 'monospace',
-          fontSize: '10px',
+          fontSize: '11px',
           color: '#ffffff',
           stroke: '#000000',
           strokeThickness: 2,
@@ -2656,10 +2729,10 @@ export class DungeonScene extends Phaser.Scene {
       const descText = this.add
         .text(cx, cy - cardH / 2 + 62, trinket.description, {
           fontFamily: 'monospace',
-          fontSize: '8px',
-          color: '#7fffa8',
+          fontSize: '9px',
+          color: '#88ffbb',
           stroke: '#000000',
-          strokeThickness: 1,
+          strokeThickness: 2,
           wordWrap: { width: cardW - 12 },
           align: 'center',
         })
@@ -2668,12 +2741,12 @@ export class DungeonScene extends Phaser.Scene {
 
       // Flavor text
       const flavorText = this.add
-        .text(cx, cy - cardH / 2 + 84, trinket.flavor, {
+        .text(cx, cy - cardH / 2 + 86, trinket.flavor, {
           fontFamily: 'monospace',
-          fontSize: '7px',
-          color: '#bfc4d4',
+          fontSize: '8px',
+          color: '#c8cde0',
           stroke: '#000000',
-          strokeThickness: 1,
+          strokeThickness: 2,
           wordWrap: { width: cardW - 12 },
           align: 'center',
         })
@@ -3135,6 +3208,8 @@ export class DungeonScene extends Phaser.Scene {
       }
     }
 
+    this.spawnTeleportPad();
+
     // Distribute XP to all party members (skip stat-card picks for boss — game is over)
     const isBoss = this.currentRoom.template.type === 'boss';
     const xpEarned = this.combatManager.xpEarned;
@@ -3551,6 +3626,7 @@ export class DungeonScene extends Phaser.Scene {
     this.spawnHealingSpring();
     this.spawnRiftShard();
     this.spawnRecruitGathering();
+    this.spawnTeleportPad();
 
     // Spawn the starter rift shard the first time the player reaches the hub
     // (after clearing both intro combats). The player walks into it to pick
@@ -3840,12 +3916,19 @@ export class DungeonScene extends Phaser.Scene {
     // Move HUD updates every frame (shows cooldowns in combat, static moves otherwise)
     this.combatHud.update(time);
 
+    const inActiveCombat = this.combatManager?.isActive && !this.combatManager.isSetupPhase;
+    const targetAlpha = inActiveCombat ? 1 : 0.3;
+    if (this.partyHud.alpha !== targetAlpha) {
+      this.partyHud.alpha = targetAlpha;
+    }
+
     this.checkHealingSpring();
     this.checkRiftShard();
     this.checkStarterShard();
     this.checkRiftCore();
     this.checkRecruitGathering();
     this.checkStarterGathering();
+    this.checkTeleportPad();
     this.checkDoorTransitions();
     this.checkBossDoorLabel();
   }

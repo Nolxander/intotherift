@@ -134,13 +134,13 @@ export class LevelUpCardPrompt {
     this.drawHeader(W, riftling, `New Move: ${newMove.name}`, '#44ffcc');
 
     // New move preview at top
-    this.drawMoveCard(W / 2 - 120, 74, 240, 40, newMove, '#44ffcc', true);
+    this.drawMoveCard(W / 2 - 120, 74, 240, 46, newMove, '#44ffcc', true);
 
     // Prompt instruction
     const instr = this.scene.add
       .text(
         W / 2,
-        126,
+        132,
         hasFreeSlot ? 'Pick a slot to fill:' : 'Pick a move to replace:',
         {
           fontFamily: 'monospace',
@@ -153,11 +153,11 @@ export class LevelUpCardPrompt {
 
     // Existing move list + empty slot (if any)
     const slotW = 130;
-    const slotH = 42;
+    const slotH = 48;
     const slotGap = 8;
     const slotsTotalW = slotCount * slotW + (slotCount - 1) * slotGap;
     const slotStartX = W / 2 - slotsTotalW / 2;
-    const slotY = 148;
+    const slotY = 154;
 
     for (let i = 0; i < slotCount; i++) {
       const x = slotStartX + i * (slotW + slotGap);
@@ -396,7 +396,9 @@ export class LevelUpCardPrompt {
       .text(x + 6, y + 16, statsText, {
         fontFamily: 'monospace',
         fontSize: '7px',
-        color: '#88aabb',
+        color: '#99bbcc',
+        stroke: '#000000',
+        strokeThickness: 2,
       })
       .setOrigin(0, 0);
     this.container.add(stats);
@@ -404,8 +406,10 @@ export class LevelUpCardPrompt {
     const desc = this.scene.add
       .text(x + 6, y + 26, move.description, {
         fontFamily: 'monospace',
-        fontSize: '6px',
-        color: '#667788',
+        fontSize: '7px',
+        color: '#99aabb',
+        stroke: '#000000',
+        strokeThickness: 2,
         wordWrap: { width: w - 14 },
       })
       .setOrigin(0, 0);

@@ -44,6 +44,10 @@ const SETUP_WALK_SPEED = 100;
 const SETUP_ARRIVE_DIST = 6;
 /** Max time (ms) for the setup phase before forcing combat start. */
 const SETUP_TIMEOUT_MS = 5000;
+/** Time (ms) added back to the setup timer when the player repositions a riftling. */
+const SETUP_DRAG_BONUS_MS = 2000;
+/** Setup timer can never exceed this cap (ms). */
+const SETUP_MAX_MS = 5000;
 /** Click radius (px) for grabbing an ally during setup drag-and-drop. */
 const DRAG_GRAB_RADIUS = 20;
 /** Drop distance under which a drop counts as swapping with another ally slot. */
@@ -3620,6 +3624,7 @@ export class CombatManager {
         this.formationTargets[j] = prevSelf;
         ally.sprite.setPosition(ox, oy);
         other.sprite.setPosition(prevSelf.x, prevSelf.y);
+        this.addSetupTimeBonus();
         return;
       }
     }
@@ -3642,6 +3647,15 @@ export class CombatManager {
     }
     this.formationTargets[idx] = { x: finalX, y: finalY };
     ally.sprite.setPosition(finalX, finalY);
+    this.addSetupTimeBonus();
+  }
+
+  private addSetupTimeBonus(): void {
+    const now = this.scene.time.now;
+    const elapsed = now - this.setupStartTime;
+    const remaining = Math.max(0, SETUP_TIMEOUT_MS - elapsed);
+    const newRemaining = Math.min(remaining + SETUP_DRAG_BONUS_MS, SETUP_MAX_MS);
+    this.setupStartTime = now - (SETUP_TIMEOUT_MS - newRemaining);
   }
 
   private cancelDrag(): void {

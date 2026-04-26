@@ -408,36 +408,37 @@ export class PartyScreen {
       const mx = px + i * (moveW + moveGap);
 
       // Move card background
+      const cardH = 54;
       const moveGfx = this.scene.add.graphics();
       if (isEquipped) {
         moveGfx.fillStyle(moveTypeColor, 0.18);
-        moveGfx.fillRoundedRect(mx, y, moveW, 44, 3);
+        moveGfx.fillRoundedRect(mx, y, moveW, cardH, 3);
         // Accent stripe
         moveGfx.fillStyle(moveTypeColor, 0.7);
-        moveGfx.fillRect(mx, y + 2, 2, 40);
+        moveGfx.fillRect(mx, y + 2, 2, cardH - 4);
       } else {
         moveGfx.fillStyle(0x1a1a2e, 0.6);
-        moveGfx.fillRoundedRect(mx, y, moveW, 44, 3);
+        moveGfx.fillRoundedRect(mx, y, moveW, cardH, 3);
       }
       this.container.add(moveGfx);
 
       // Move name
       const prefix = move.isSignature ? '\u2605 ' : isEquipped ? '\u25CF ' : '\u25CB ';
       const color = isEquipped ? '#ffffff' : '#666666';
-      const nameText = this.addText(mx + 6, y + 2, `${prefix}${move.name}`, 8, color);
+      const nameText = this.addText(mx + 6, y + 2, `${prefix}${move.name}`, 9, color);
 
       // Kind + Power + cooldown
       const kindColor = this.getMoveKindColor(move.kind);
-      this.addText(mx + 6, y + 12, `[${move.kind}]`, 6, kindColor);
-      this.addText(mx + moveW - 4, y + 12, `P${move.power} / ${move.cooldown}s`, 6, '#777777', 1);
+      this.addText(mx + 6, y + 14, `[${move.kind}]`, 8, kindColor);
+      this.addText(mx + moveW - 4, y + 14, `P${move.power} / ${move.cooldown}s`, 8, '#8899aa', 1);
 
       // Description (word-wrapped in card)
-      const desc = this.scene.add.text(mx + 6, y + 22, move.description, {
+      const desc = this.scene.add.text(mx + 6, y + 25, move.description, {
         fontFamily: FONT,
-        fontSize: '6px',
-        color: '#555555',
+        fontSize: '8px',
+        color: '#99aabb',
         stroke: '#000000',
-        strokeThickness: 1,
+        strokeThickness: 2,
         wordWrap: { width: moveW - 12 },
       }).setOrigin(0, 0);
       this.container.add(desc);
@@ -447,14 +448,14 @@ export class PartyScreen {
       nameText.on('pointerdown', () => this.toggleEquip(riftling, i));
 
       // Also make the card background clickable
-      const hitZone = this.scene.add.rectangle(mx + moveW / 2, y + 22, moveW, 44, 0x000000, 0);
+      const hitZone = this.scene.add.rectangle(mx + moveW / 2, y + cardH / 2, moveW, cardH, 0x000000, 0);
       hitZone.setInteractive({ useHandCursor: true });
       hitZone.on('pointerdown', () => this.toggleEquip(riftling, i));
       this.container.add(hitZone);
     }
 
     // --- Game Info Guide ---
-    y += 50;
+    y += 60;
     const divGfx2 = this.scene.add.graphics();
     divGfx2.lineStyle(1, 0x333355);
     divGfx2.lineBetween(px, y, px + pw, y);
@@ -467,53 +468,48 @@ export class PartyScreen {
     guideBg.fillRoundedRect(px - 2, y - 2, pw + 4, H - y - 24, 4);
     this.container.add(guideBg);
 
-    this.addText(px, y, 'GUIDE', 7, '#aabbdd');
-    y += 10;
+    this.addText(px, y, 'GUIDE', 8, '#aabbdd');
+    y += 11;
 
     const colW = Math.floor(pw / 2) - 4;
-    const bodyColor = '#bbbbbb';
-    const synDescColor = '#aaaaaa';
+    const bodyColor = '#cccccc';
+    const synDescColor = '#bbbbbb';
 
     // Left column: Controls & Party Management
     let ly = y;
-    this.addText(px, ly, 'CONTROLS', 7, '#ffdd44'); ly += 9;
-    this.addText(px, ly, 'WASD to move', 6, bodyColor); ly += 7;
-    this.addText(px, ly, 'TAB to open/close bag', 6, bodyColor); ly += 7;
-    this.addText(px, ly, 'Click riftling in combat to focus target', 6, bodyColor); ly += 10;
+    this.addText(px, ly, 'CONTROLS', 8, '#ffdd44'); ly += 10;
+    this.addText(px, ly, 'WASD to move', 7, bodyColor); ly += 8;
+    this.addText(px, ly, 'TAB to open/close bag', 7, bodyColor); ly += 8;
+    this.addText(px, ly, 'Click riftling in combat to focus target', 7, bodyColor); ly += 8;
+    this.addText(px, ly, '★ = signature move (always equipped)', 7, bodyColor); ly += 11;
 
-    this.addText(px, ly, 'PARTY MANAGEMENT', 7, '#ffdd44'); ly += 9;
-    this.addText(px, ly, 'Click a tab above to select a riftling', 6, bodyColor); ly += 7;
-    this.addText(px, ly, 'Drag a tab to ACTIVE/BENCH to swap', 6, bodyColor); ly += 7;
-    this.addText(px, ly, 'Click a move card to change equipped move', 6, bodyColor); ly += 7;
-    this.addText(px, ly, '★ = signature move (always equipped)', 6, bodyColor); ly += 10;
-
-    this.addText(px, ly, 'TYPE SYNERGIES  (2+ same type)', 7, '#ffdd44'); ly += 9;
+    this.addText(px, ly, 'TYPE SYNERGIES  (2+ same type)', 8, '#ffdd44'); ly += 10;
     for (const [type, syn] of Object.entries(TYPE_SYNERGIES)) {
       const color = TYPE_COLORS_HEX[type] ?? '#cccccc';
-      this.addText(px, ly, `${type.toUpperCase()}`, 6, color);
-      this.addText(px + 44, ly, `${syn.name}: ${syn.description}`, 6, synDescColor);
-      ly += 7;
+      this.addText(px, ly, `${type.toUpperCase()}`, 7, color);
+      this.addText(px + 48, ly, `${syn.name}: ${syn.description}`, 7, synDescColor);
+      ly += 8;
     }
 
     // Right column: Class synergies
     let ry = y;
     const rx = px + colW + 8;
-    this.addText(rx, ry, 'CLASS SYNERGIES  (2+ same class)', 7, '#ffdd44'); ry += 9;
+    this.addText(rx, ry, 'CLASS SYNERGIES  (2+ same class)', 8, '#ffdd44'); ry += 10;
     const roles: Role[] = ['vanguard', 'skirmisher', 'striker', 'caster', 'hunter', 'support', 'hexer'];
     for (const role of roles) {
       const syn = ROLE_SYNERGIES[role];
       const color = ROLE_COLORS[role] ?? '#cccccc';
-      this.addText(rx, ry, `${role.toUpperCase()}`, 6, color);
-      this.addText(rx + 62, ry, `${syn.name}: ${syn.description}`, 6, synDescColor);
-      ry += 7;
+      this.addText(rx, ry, `${role.toUpperCase()}`, 7, color);
+      this.addText(rx + 68, ry, `${syn.name}: ${syn.description}`, 7, synDescColor);
+      ry += 8;
     }
     ry += 3;
 
-    this.addText(rx, ry, 'TIPS', 7, '#ffdd44'); ry += 9;
-    this.addText(rx, ry, 'Mix types and classes for synergy bonuses', 6, bodyColor); ry += 7;
-    this.addText(rx, ry, 'Synergies activate at the start of combat', 6, bodyColor); ry += 7;
-    this.addText(rx, ry, 'Check the left HUD icons for active synergies', 6, bodyColor); ry += 7;
-    this.addText(rx, ry, 'Benched riftlings don\'t count for synergies', 6, bodyColor);
+    this.addText(rx, ry, 'TIPS', 8, '#ffdd44'); ry += 10;
+    this.addText(rx, ry, 'Mix types and classes for synergy bonuses', 7, bodyColor); ry += 8;
+    this.addText(rx, ry, 'Synergies activate at the start of combat', 7, bodyColor); ry += 8;
+    this.addText(rx, ry, 'Check the left HUD icons for active synergies', 7, bodyColor); ry += 8;
+    this.addText(rx, ry, 'Benched riftlings don\'t count for synergies', 7, bodyColor);
   }
 
   // ---- Bottom trinket strip ----

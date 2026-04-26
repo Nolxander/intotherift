@@ -236,13 +236,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 2,   max: 8   },
     },
     moves: [
-      { name: 'Ember Strike', power: 5, cooldown: 3, description: 'Quick fiery bite that stacks ignite on the target', isSignature: false, kind: 'strike', appliesIgnite: 2, attackAnim: 'attack', attackAnimDelay: 300 },
-      { name: 'Fire Dash', power: 8, cooldown: 8, description: 'Dashes through the target, repositioning behind it', isSignature: true, kind: 'pierce', repositions: true },
+      { name: 'Ember Strike', power: 5, cooldown: 3, description: 'Bite that stacks ignite', isSignature: false, kind: 'strike', appliesIgnite: 2, attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Fire Dash', power: 8, cooldown: 8, description: 'Dash through, reposition behind', isSignature: true, kind: 'pierce', repositions: true },
     ],
     upgradeMoves: [
-      { name: 'Flame Charge', power: 7, cooldown: 10, description: 'Deals bonus damage for each ignite stack on the target, then drains life', isSignature: false, kind: 'drain', drainRatio: 0.3, bonusPerIgnite: 1.5 },
-      { name: 'Cinder Trail', power: 9, cooldown: 7, description: 'Sprints through the target leaving a scorching trail that stacks heavy ignite', isSignature: false, kind: 'pierce', repositions: true, appliesIgnite: 3 },
-      { name: 'Inferno Pounce', power: 12, cooldown: 15, description: 'Leaps at the target in a ball of flame, igniting and slowing them on landing', isSignature: false, kind: 'leap', appliesIgnite: 4, appliesSlowOnLand: true, duration: 2500 },
+      { name: 'Flame Charge', power: 7, cooldown: 10, description: 'Bonus dmg per ignite stack, drains life', isSignature: false, kind: 'drain', drainRatio: 0.3, bonusPerIgnite: 1.5 },
+      { name: 'Cinder Trail', power: 9, cooldown: 7, description: 'Pierce through, stacks heavy ignite', isSignature: false, kind: 'pierce', repositions: true, appliesIgnite: 3 },
+      { name: 'Inferno Pounce', power: 12, cooldown: 15, description: 'Leap attack, ignites and slows on land', isSignature: false, kind: 'leap', appliesIgnite: 4, appliesSlowOnLand: true, duration: 2500 },
     ],
   },
   pyreshell: {
@@ -268,13 +268,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 0,    max: 1    },
     },
     moves: [
-      { name: 'Magma Slam', power: 7, cooldown: 5, description: 'Heavy shell-slam that leaves a burning mark on the target', isSignature: false, kind: 'strike', appliesIgnite: 1, attackAnim: 'attack', attackAnimDelay: 200 },
-      { name: 'Eruption', power: 9, cooldown: 20, description: 'Shell erupts in a molten blast, igniting every enemy caught in the radius', isSignature: true, kind: 'blast', radius: 45, appliesIgnite: 3, attackAnim: 'attack', attackAnimDelay: 200 },
+      { name: 'Magma Slam', power: 7, cooldown: 5, description: 'Shell slam, applies ignite', isSignature: false, kind: 'strike', appliesIgnite: 1, attackAnim: 'attack', attackAnimDelay: 200 },
+      { name: 'Eruption', power: 9, cooldown: 20, description: 'AoE blast, ignites all enemies in range', isSignature: true, kind: 'blast', radius: 45, appliesIgnite: 3, attackAnim: 'attack', attackAnimDelay: 200 },
     ],
     upgradeMoves: [
-      { name: 'Lava Shield', power: 4, cooldown: 60, description: 'Pyreshell coats itself in molten armor, boosting defense and reflecting hits for 4 seconds', isSignature: false, kind: 'shield', duration: 4000, selfTarget: true, thornsAmount: 2 },
-      { name: 'Searing Wave', power: 8, cooldown: 10, description: 'Spins with molten fury, burning every enemy caught in the swirl', isSignature: false, kind: 'spin', radius: 50, appliesIgnite: 2 },
-      { name: 'Caldera Burst', power: 13, cooldown: 22, description: 'The shell erupts with volcanic force, igniting and stunning everything in a wide radius', isSignature: false, kind: 'blast', radius: 60, appliesIgnite: 4, stunsRadius: true, stunDuration: 600 },
+      { name: 'Lava Shield', power: 4, cooldown: 60, description: 'Shield self, +DEF and reflect dmg 4s', isSignature: false, kind: 'shield', duration: 4000, selfTarget: true, thornsAmount: 2 },
+      { name: 'Searing Wave', power: 8, cooldown: 10, description: 'Spin AoE, ignites nearby enemies', isSignature: false, kind: 'spin', radius: 50, appliesIgnite: 2 },
+      { name: 'Caldera Burst', power: 13, cooldown: 22, description: 'Wide AoE blast, ignite + stun', isSignature: false, kind: 'blast', radius: 60, appliesIgnite: 4, stunsRadius: true, stunDuration: 600 },
     ],
   },
   solarglare: {
@@ -300,13 +300,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 8,   max: 17   },
     },
     moves: [
-      { name: 'Light Lance', power: 6, cooldown: 4, description: 'Focused light shot that blinds the target, reducing their accuracy', isSignature: false, kind: 'strike', appliesBlind: 10, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 250, attackOriginOffsetY: -8 },
-      { name: 'Solar Flare', power: 10, cooldown: 25, description: 'Fires a sustained beam of light in a straight line, scorching everything in its path for 3 seconds', isSignature: true, kind: 'beam', attackOriginOffsetY: -8 },
+      { name: 'Light Lance', power: 6, cooldown: 4, description: 'Light shot, blinds target', isSignature: false, kind: 'strike', appliesBlind: 10, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 250, attackOriginOffsetY: -8 },
+      { name: 'Solar Flare', power: 10, cooldown: 25, description: 'Beam in a line, hits everything for 3s', isSignature: true, kind: 'beam', attackOriginOffsetY: -8 },
     ],
     upgradeMoves: [
-      { name: 'Prism Shot', power: 4, cooldown: 3, description: 'Scatters light bolts that refract to nearby enemies', isSignature: false, kind: 'barrage', hits: 3, refracts: true, attackAnim: 'attack', attackAnimDelay: 250, attackOriginOffsetY: -8 },
-      { name: 'Sunspear', power: 10, cooldown: 9, description: 'Hurls a shaft of sunlight through a line of enemies, blinding each', isSignature: false, kind: 'pierce', dashThrough: true, appliesBlind: 15, blindDuration: 2500 },
-      { name: 'Zenith Nova', power: 12, cooldown: 22, description: 'Detonates in a cataclysm of light, searing and blinding all enemies in a wide radius', isSignature: false, kind: 'blast', radius: 80, appliesBlind: 25, blindDuration: 4000 },
+      { name: 'Prism Shot', power: 4, cooldown: 3, description: 'Refracting bolts hit 3 targets', isSignature: false, kind: 'barrage', hits: 3, refracts: true, attackAnim: 'attack', attackAnimDelay: 250, attackOriginOffsetY: -8 },
+      { name: 'Sunspear', power: 10, cooldown: 9, description: 'Pierce through enemies, blinds each', isSignature: false, kind: 'pierce', dashThrough: true, appliesBlind: 15, blindDuration: 2500 },
+      { name: 'Zenith Nova', power: 12, cooldown: 22, description: 'Wide AoE blast, blinds all enemies', isSignature: false, kind: 'blast', radius: 80, appliesBlind: 25, blindDuration: 4000 },
     ],
   },
   lumoth: {
@@ -332,13 +332,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 13,  max: 24   },
     },
     moves: [
-      { name: 'Dust Blast', power: 6, cooldown: 3, description: 'Dust cloud that slows and blinds the target', isSignature: false, kind: 'slow', duration: 3000, appliesBlind: 10, blindDuration: 2000 },
-      { name: 'Luminova', power: 11, cooldown: 11, description: 'Intense flash that blinds all enemies in a wide area; Lumoth slips away in the chaos', isSignature: true, kind: 'blast', radius: 70, appliesBlind: 15, blindDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 15, selfBuffDuration: 2000 },
+      { name: 'Dust Blast', power: 6, cooldown: 3, description: 'Slows and blinds target', isSignature: false, kind: 'slow', duration: 3000, appliesBlind: 10, blindDuration: 2000 },
+      { name: 'Luminova', power: 11, cooldown: 11, description: 'Wide AoE blind, +evasion self', isSignature: true, kind: 'blast', radius: 70, appliesBlind: 15, blindDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 15, selfBuffDuration: 2000 },
     ],
     upgradeMoves: [
-      { name: 'Moonbolt', power: 9, cooldown: 6, description: 'A focused bolt of lunar light — reliable ranged damage', isSignature: false, kind: 'strike', attackAnim: 'attack', attackAnimDelay: 300 },
-      { name: 'Stardust Veil', power: 6, cooldown: 10, description: 'Swirls a cloud of blinding dust and slips into the shadows, boosting evasion', isSignature: false, kind: 'spin', radius: 60, appliesBlind: 15, blindDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 20, selfBuffDuration: 2500 },
-      { name: 'Eclipse Storm', power: 8, cooldown: 14, description: 'Unleashes a cascade of refracting lunar bolts that blind everything they touch', isSignature: false, kind: 'barrage', hits: 5, refracts: true, appliesBlind: 12, blindDuration: 2500 },
+      { name: 'Moonbolt', power: 9, cooldown: 6, description: 'Reliable ranged damage', isSignature: false, kind: 'strike', attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Stardust Veil', power: 6, cooldown: 10, description: 'Spin AoE blind, +evasion self', isSignature: false, kind: 'spin', radius: 60, appliesBlind: 15, blindDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 20, selfBuffDuration: 2500 },
+      { name: 'Eclipse Storm', power: 8, cooldown: 14, description: 'Refracting bolts hit 5, blind each', isSignature: false, kind: 'barrage', hits: 5, refracts: true, appliesBlind: 12, blindDuration: 2500 },
     ],
   },
   tidecrawler: {
@@ -364,13 +364,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 0,    max: 4    },
     },
     moves: [
-      { name: 'Claw Crush', power: 6, cooldown: 4, description: 'Crushes the target with pincers, waterlogging and reducing their defense', isSignature: false, kind: 'strike', appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
-      { name: 'Tidal Spin', power: 10, cooldown: 10, description: 'Spins in a torrent of water, striking all nearby enemies at once', isSignature: true, kind: 'spin', radius: 50, attackAnim: 'spin' },
+      { name: 'Claw Crush', power: 6, cooldown: 4, description: 'Pincer strike, -DEF debuff', isSignature: false, kind: 'strike', appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Tidal Spin', power: 10, cooldown: 10, description: 'Spin AoE, hits all nearby', isSignature: true, kind: 'spin', radius: 50, attackAnim: 'spin' },
     ],
     upgradeMoves: [
-      { name: 'Shell Guard', power: 0, cooldown: 8, description: 'Braces for impact — draws all nearby enemy attention and boosts own defense', isSignature: false, kind: 'taunt', duration: 4000, selfBuffStat: 'defense', selfBuffAmount: 3, selfBuffDuration: 4000 },
-      { name: 'Undertow Pull', power: 8, cooldown: 6, description: 'Drags the target into pincer range and cracks their armor', isSignature: false, kind: 'strike', pullsTarget: true, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3000 },
-      { name: 'Maelstrom', power: 12, cooldown: 18, description: 'Summons a crushing whirlpool that drenches and slows every enemy in a wide area', isSignature: false, kind: 'blast', radius: 60, appliesStatDebuff: 'speed', debuffAmount: 25, debuffDuration: 3000 },
+      { name: 'Shell Guard', power: 0, cooldown: 8, description: 'Taunt nearby enemies, +DEF self', isSignature: false, kind: 'taunt', duration: 4000, selfBuffStat: 'defense', selfBuffAmount: 3, selfBuffDuration: 4000 },
+      { name: 'Undertow Pull', power: 8, cooldown: 6, description: 'Pulls target closer, -DEF debuff', isSignature: false, kind: 'strike', pullsTarget: true, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3000 },
+      { name: 'Maelstrom', power: 12, cooldown: 18, description: 'Wide AoE, -SPD debuff all enemies', isSignature: false, kind: 'blast', radius: 60, appliesStatDebuff: 'speed', debuffAmount: 25, debuffDuration: 3000 },
     ],
   },
   gloomfang: {
@@ -396,13 +396,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 10,  max: 21  },
     },
     moves: [
-      { name: 'Shadow Bite', power: 7, cooldown: 3, description: 'Drains life and marks the target — marked enemies take 25% more damage from all sources', isSignature: false, kind: 'drain', drainRatio: 0.35, appliesHuntersMark: true, markBonus: 0.25, markDuration: 4000, attackAnim: 'attack', attackAnimDelay: 300 },
-      { name: 'Void Rend', power: 12, cooldown: 10, description: 'Tears through armor — devastates wounded targets with execute bonus damage', isSignature: true, kind: 'pierce', executeBonusPct: 0.2 },
+      { name: 'Shadow Bite', power: 7, cooldown: 3, description: 'Drain life + mark for +25% dmg taken', isSignature: false, kind: 'drain', drainRatio: 0.35, appliesHuntersMark: true, markBonus: 0.25, markDuration: 4000, attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Void Rend', power: 12, cooldown: 10, description: 'Pierce, execute bonus on wounded', isSignature: true, kind: 'pierce', executeBonusPct: 0.2 },
     ],
     upgradeMoves: [
-      { name: 'Dusk Dash', power: 5, cooldown: 4, description: 'Blinks to the highest-threat backline enemy and slows them on arrival', isSignature: false, kind: 'leap', shadowStep: true, appliesSlowOnLand: true, duration: 2500 },
-      { name: 'Grave Mark', power: 8, cooldown: 5, description: 'A branding strike that lingers — marked targets take heavy bonus damage and crack armor', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.35, markDuration: 5000, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
-      { name: 'Oblivion Rend', power: 10, cooldown: 12, description: 'Phases through a line of enemies, tearing wounded foes apart with execute damage', isSignature: false, kind: 'pierce', dashThrough: true, executeBonusPct: 0.35 },
+      { name: 'Dusk Dash', power: 5, cooldown: 4, description: 'Leap to backline, slows on land', isSignature: false, kind: 'leap', shadowStep: true, appliesSlowOnLand: true, duration: 2500 },
+      { name: 'Grave Mark', power: 8, cooldown: 5, description: 'Mark for +35% dmg, -DEF debuff', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.35, markDuration: 5000, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Oblivion Rend', power: 10, cooldown: 12, description: 'Pierce line, execute on wounded', isSignature: false, kind: 'pierce', dashThrough: true, executeBonusPct: 0.35 },
     ],
   },
   barkbiter: {
@@ -428,13 +428,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 4,   max: 13   },
     },
     moves: [
-      { name: 'Sap Leech', power: 6, cooldown: 5, description: 'Heals the most injured ally; heals self if no ally needs it', isSignature: false, kind: 'heal', selfHealFallback: true },
-      { name: 'Thornburst', power: 6, cooldown: 9, description: 'Erupts thorns at multiple enemies — each target takes damage whenever they attack while briar is active', isSignature: true, kind: 'barrage', hits: 3, appliesBriar: 2, briarDuration: 4000, attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Sap Leech', power: 6, cooldown: 5, description: 'Heal most injured ally (or self)', isSignature: false, kind: 'heal', selfHealFallback: true },
+      { name: 'Thornburst', power: 6, cooldown: 9, description: 'Hits 3, applies briar (dmg on attack)', isSignature: true, kind: 'barrage', hits: 3, appliesBriar: 2, briarDuration: 4000, attackAnim: 'attack', attackAnimDelay: 300 },
     ],
     upgradeMoves: [
-      { name: 'Root Snap', power: 6, cooldown: 5, description: 'Snaps a root tendril at the target, dealing damage and pinning them in place', isSignature: false, kind: 'slow', rootTarget: true, duration: 1500 },
-      { name: 'Bramble Shield', power: 0, cooldown: 12, description: 'Wreathes itself in thorns — enemies who attack it take reflected damage', isSignature: false, kind: 'shield', duration: 5000, selfTarget: true, thornsAmount: 4 },
-      { name: 'Verdant Pulse', power: 8, cooldown: 14, description: 'Releases a pulse of thorny growth — every enemy caught is ensnared with heavy briar', isSignature: false, kind: 'blast', radius: 60, appliesBriar: 3, briarDuration: 5000 },
+      { name: 'Root Snap', power: 6, cooldown: 5, description: 'Roots target in place', isSignature: false, kind: 'slow', rootTarget: true, duration: 1500 },
+      { name: 'Bramble Shield', power: 0, cooldown: 12, description: 'Shield self, reflects dmg to attackers', isSignature: false, kind: 'shield', duration: 5000, selfTarget: true, thornsAmount: 4 },
+      { name: 'Verdant Pulse', power: 8, cooldown: 14, description: 'AoE blast, heavy briar on all hit', isSignature: false, kind: 'blast', radius: 60, appliesBriar: 3, briarDuration: 5000 },
     ],
   },
   tremorhorn: {
@@ -460,13 +460,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 0,    max: 1    },
     },
     moves: [
-      { name: 'Vine Leech', power: 3, cooldown: 4, description: 'Earthen vines latch onto a nearby target, dealing minimal damage but draining their vitality', isSignature: false, kind: 'drain', drainRatio: 0.7 },
-      { name: 'Earthquake', power: 11, cooldown: 12, description: 'Stomps the ground with seismic force, stunning all enemies caught in the blast', isSignature: true, kind: 'blast', radius: 55, stunsRadius: true, stunDuration: 800, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Vine Leech', power: 3, cooldown: 4, description: 'Low dmg, high life drain', isSignature: false, kind: 'drain', drainRatio: 0.7 },
+      { name: 'Earthquake', power: 11, cooldown: 12, description: 'AoE blast, stuns all in range', isSignature: true, kind: 'blast', radius: 55, stunsRadius: true, stunDuration: 800, attackAnim: 'attack', attackAnimDelay: 350 },
     ],
     upgradeMoves: [
-      { name: 'Stone Bash', power: 5, cooldown: 7, description: 'Bellows a challenge drawing nearby enemies — braces against knockback and reinforces own defense', isSignature: false, kind: 'taunt', duration: 5000, selfBuffStat: 'defense', selfBuffAmount: 5, selfBuffDuration: 5000, grantsKnockbackImmunity: true },
-      { name: 'Fault Line', power: 9, cooldown: 10, description: 'Charges forward splitting the earth, slowing every enemy in its path', isSignature: false, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'speed', debuffAmount: 20, debuffDuration: 3000 },
-      { name: 'Aftershock', power: 13, cooldown: 22, description: 'An unstoppable stomp — the ground buckles, stunning every nearby enemy for a full second', isSignature: false, kind: 'blast', radius: 60, stunsRadius: true, stunDuration: 1000 },
+      { name: 'Stone Bash', power: 5, cooldown: 7, description: 'Taunt, +DEF, knockback immune', isSignature: false, kind: 'taunt', duration: 5000, selfBuffStat: 'defense', selfBuffAmount: 5, selfBuffDuration: 5000, grantsKnockbackImmunity: true },
+      { name: 'Fault Line', power: 9, cooldown: 10, description: 'Pierce line, -SPD all hit', isSignature: false, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'speed', debuffAmount: 20, debuffDuration: 3000 },
+      { name: 'Aftershock', power: 13, cooldown: 22, description: 'Wide AoE, stuns all for 1s', isSignature: false, kind: 'blast', radius: 60, stunsRadius: true, stunDuration: 1000 },
     ],
   },
   hollowcrow: {
@@ -492,13 +492,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 15,  max: 26   },
     },
     moves: [
-      { name: 'Peck Barrage', power: 4, cooldown: 3, description: 'Rapid aerial strikes that hex each target, reducing their attack power', isSignature: false, kind: 'barrage', hits: 3, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000 },
-      { name: 'Phantom Dive', power: 10, cooldown: 10, description: 'Phases into the shadows — untouchable for 0.8s — then strikes with a piercing dive', isSignature: true, kind: 'pierce', phasesBeforeStrike: true },
+      { name: 'Peck Barrage', power: 4, cooldown: 3, description: 'Hits 3, -ATK debuff each', isSignature: false, kind: 'barrage', hits: 3, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Phantom Dive', power: 10, cooldown: 10, description: 'Phase 0.8s, then pierce strike', isSignature: true, kind: 'pierce', phasesBeforeStrike: true },
     ],
     upgradeMoves: [
-      { name: 'Hex Screech', power: 5, cooldown: 6, description: 'Unsettling cry that slows and hexes all nearby enemies', isSignature: false, kind: 'spin', radius: 60, appliesSlowToAllHit: true, duration: 3000, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000, attackAnim: 'attack', attackAnimDelay: 350 },
-      { name: 'Umbral Volley', power: 5, cooldown: 7, description: 'A flurry of shadow-tipped feathers that cripple every target\u2019s attack power', isSignature: false, kind: 'barrage', hits: 4, appliesStatDebuff: 'attack', debuffAmount: 3, debuffDuration: 3000 },
-      { name: 'Nightfall Dive', power: 12, cooldown: 14, description: 'Fades out, then comes screaming back down with an execute strike on a wounded target', isSignature: false, kind: 'pierce', phasesBeforeStrike: true, executeBonusPct: 0.3 },
+      { name: 'Hex Screech', power: 5, cooldown: 6, description: 'Spin AoE, slows + -ATK all nearby', isSignature: false, kind: 'spin', radius: 60, appliesSlowToAllHit: true, duration: 3000, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Umbral Volley', power: 5, cooldown: 7, description: 'Hits 4, heavy -ATK debuff each', isSignature: false, kind: 'barrage', hits: 4, appliesStatDebuff: 'attack', debuffAmount: 3, debuffDuration: 3000 },
+      { name: 'Nightfall Dive', power: 12, cooldown: 14, description: 'Phase, then execute on wounded', isSignature: false, kind: 'pierce', phasesBeforeStrike: true, executeBonusPct: 0.3 },
     ],
   },
   rivelet: {
@@ -524,13 +524,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 9,   max: 20  },
     },
     moves: [
-      { name: 'Crystal Claw', power: 6, cooldown: 3, description: 'Slashes with icy claws, waterlogging and reducing target defense', isSignature: false, kind: 'strike', appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000, attackAnim: 'attack', attackAnimDelay: 300 },
-      { name: 'Torrent Rush', power: 10, cooldown: 9, description: 'Surges through enemies in a straight line, waterlogging every target hit', isSignature: true, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Crystal Claw', power: 6, cooldown: 3, description: 'Claw strike, -DEF debuff', isSignature: false, kind: 'strike', appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000, attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Torrent Rush', power: 10, cooldown: 9, description: 'Pierce line, -DEF all hit', isSignature: true, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
     ],
     upgradeMoves: [
-      { name: 'Undertow', power: 5, cooldown: 5, description: 'Drains life from the target and yanks them closer', isSignature: false, kind: 'drain', drainRatio: 0.3, pullsTarget: true },
-      { name: 'Frost Claws', power: 7, cooldown: 5, description: 'Rapid icy claws that chill the target to the bone, crippling their movement', isSignature: false, kind: 'strike', appliesStatDebuff: 'speed', debuffAmount: 25, debuffDuration: 3000 },
-      { name: 'Glacial Surge', power: 11, cooldown: 11, description: 'Charges in a frozen line, shattering the armor of every enemy caught in the surge', isSignature: false, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 4, debuffDuration: 4000 },
+      { name: 'Undertow', power: 5, cooldown: 5, description: 'Drain life, pull target closer', isSignature: false, kind: 'drain', drainRatio: 0.3, pullsTarget: true },
+      { name: 'Frost Claws', power: 7, cooldown: 5, description: 'Strike, heavy -SPD debuff', isSignature: false, kind: 'strike', appliesStatDebuff: 'speed', debuffAmount: 25, debuffDuration: 3000 },
+      { name: 'Glacial Surge', power: 11, cooldown: 11, description: 'Pierce line, heavy -DEF all hit', isSignature: false, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 4, debuffDuration: 4000 },
     ],
   },
   grindscale: {
@@ -556,13 +556,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 0,    max: 1    },
     },
     moves: [
-      { name: 'Scale Slam', power: 5, cooldown: 5, description: 'Whips armored tail — bonus damage scales with own defense stat', isSignature: false, kind: 'strike', defenseScaledBonus: 0.5, attackAnim: 'attack', attackAnimDelay: 350 },
-      { name: 'Stonegrind', power: 11, cooldown: 11, description: 'Curls into a boulder and rolls through enemies in a line, shredding their armor', isSignature: true, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3000 },
+      { name: 'Scale Slam', power: 5, cooldown: 5, description: 'Tail strike, scales with own DEF', isSignature: false, kind: 'strike', defenseScaledBonus: 0.5, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Stonegrind', power: 11, cooldown: 11, description: 'Roll through line, -DEF all hit', isSignature: true, kind: 'pierce', dashThrough: true, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3000 },
     ],
     upgradeMoves: [
-      { name: 'Iron Curl', power: 0, cooldown: 8, description: 'Coils into an armored ball, taunting nearby enemies and reducing all incoming damage by 40% for 3 seconds', isSignature: false, kind: 'taunt', duration: 4000, grantsDamageReduction: 0.4, damageReductionDuration: 3000 },
-      { name: 'Bedrock Stance', power: 0, cooldown: 12, description: 'Roots into the ground, taunting foes and hardening its defense — cannot be knocked back', isSignature: false, kind: 'taunt', duration: 5000, selfBuffStat: 'defense', selfBuffAmount: 6, selfBuffDuration: 5000, grantsKnockbackImmunity: true },
-      { name: 'Avalanche Charge', power: 9, cooldown: 11, description: 'Rolls through a line of enemies with crushing force — scales heavily with defense', isSignature: false, kind: 'pierce', dashThrough: true, defenseScaledBonus: 0.75 },
+      { name: 'Iron Curl', power: 0, cooldown: 8, description: 'Taunt, -40% dmg taken for 3s', isSignature: false, kind: 'taunt', duration: 4000, grantsDamageReduction: 0.4, damageReductionDuration: 3000 },
+      { name: 'Bedrock Stance', power: 0, cooldown: 12, description: 'Taunt, +DEF, knockback immune', isSignature: false, kind: 'taunt', duration: 5000, selfBuffStat: 'defense', selfBuffAmount: 6, selfBuffDuration: 5000, grantsKnockbackImmunity: true },
+      { name: 'Avalanche Charge', power: 9, cooldown: 11, description: 'Pierce line, scales with own DEF', isSignature: false, kind: 'pierce', dashThrough: true, defenseScaledBonus: 0.75 },
     ],
   },
   thistlebound: {
@@ -588,13 +588,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 11,  max: 22   },
     },
     moves: [
-      { name: 'Seed Barrage', power: 5, cooldown: 3, description: 'Volley of sharp seeds that spreads briar across targets', isSignature: false, kind: 'barrage', hits: 3, appliesBriar: 1, briarDuration: 3000, refracts: true },
-      { name: 'Predator\'s Leap', power: 8, cooldown: 12, description: 'Leaps to the farthest ranged enemy, landing with a piercing strike that exposes their defenses', isSignature: true, kind: 'leap', appliesStatDebuff: 'evasion', debuffAmount: 5, debuffDuration: 3000 },
+      { name: 'Seed Barrage', power: 5, cooldown: 3, description: 'Refracting seeds, briar on 3 targets', isSignature: false, kind: 'barrage', hits: 3, appliesBriar: 1, briarDuration: 3000, refracts: true },
+      { name: 'Predator\'s Leap', power: 8, cooldown: 12, description: 'Leap to backline, -EVA debuff', isSignature: true, kind: 'leap', appliesStatDebuff: 'evasion', debuffAmount: 5, debuffDuration: 3000 },
     ],
     upgradeMoves: [
-      { name: 'Briar Bolt', power: 8, cooldown: 8, description: 'Thorn-wrapped bolt that slows and briar-snares the target', isSignature: false, kind: 'slow', duration: 3000, appliesBriar: 2, briarDuration: 4000, attackAnim: 'attack', attackAnimDelay: 300 },
-      { name: 'Snare Volley', power: 6, cooldown: 8, description: 'Launches a wide volley of briar seeds that refract between targets, each ensnared in thorns', isSignature: false, kind: 'barrage', hits: 4, refracts: true, appliesBriar: 2, briarDuration: 4000 },
-      { name: 'Apex Ambush', power: 11, cooldown: 15, description: 'Pounces on a distant target with predatory fury, leaving them exposed and tangled in briar', isSignature: false, kind: 'leap', appliesStatDebuff: 'evasion', debuffAmount: 10, debuffDuration: 4000, appliesBriar: 3, briarDuration: 5000 },
+      { name: 'Briar Bolt', power: 8, cooldown: 8, description: 'Slows target, applies briar', isSignature: false, kind: 'slow', duration: 3000, appliesBriar: 2, briarDuration: 4000, attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Snare Volley', power: 6, cooldown: 8, description: 'Refracting volley, briar on 4 targets', isSignature: false, kind: 'barrage', hits: 4, refracts: true, appliesBriar: 2, briarDuration: 4000 },
+      { name: 'Apex Ambush', power: 11, cooldown: 15, description: 'Leap to target, -EVA + heavy briar', isSignature: false, kind: 'leap', appliesStatDebuff: 'evasion', debuffAmount: 10, debuffDuration: 4000, appliesBriar: 3, briarDuration: 5000 },
     ],
   },
   wavecaller: {
@@ -620,13 +620,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 6,   max: 15   },
     },
     moves: [
-      { name: 'Tidebolt', power: 6, cooldown: 4, description: 'Hurls a bolt of pressurized water that waterlogs and slows the target', isSignature: false, kind: 'slow', duration: 2500, appliesStatDebuff: 'defense', debuffAmount: 1, debuffDuration: 3000, attackAnim: 'attack', attackAnimDelay: 350 },
-      { name: 'Geyser Burst', power: 10, cooldown: 12, description: 'Erupts a geyser under the target, launching water in all directions and stunning nearby enemies', isSignature: true, kind: 'blast', radius: 55, stunsRadius: true, stunDuration: 600 },
+      { name: 'Tidebolt', power: 6, cooldown: 4, description: 'Slows target, -DEF debuff', isSignature: false, kind: 'slow', duration: 2500, appliesStatDebuff: 'defense', debuffAmount: 1, debuffDuration: 3000, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Geyser Burst', power: 10, cooldown: 12, description: 'AoE blast, stuns nearby enemies', isSignature: true, kind: 'blast', radius: 55, stunsRadius: true, stunDuration: 600 },
     ],
     upgradeMoves: [
-      { name: 'Healing Rain', power: 8, cooldown: 10, description: 'Calls a soothing rain that heals the most injured ally', isSignature: false, kind: 'heal', selfHealFallback: true },
-      { name: 'Riptide Beam', power: 9, cooldown: 20, description: 'Fires a sustained torrent of water in a straight line, drenching everything in its path', isSignature: false, kind: 'beam' },
-      { name: 'Deluge', power: 12, cooldown: 22, description: 'Calls a massive waterspout that drenches, slows, and crushes the defense of all enemies in range', isSignature: false, kind: 'blast', radius: 65, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 4000 },
+      { name: 'Healing Rain', power: 8, cooldown: 10, description: 'Heal most injured ally (or self)', isSignature: false, kind: 'heal', selfHealFallback: true },
+      { name: 'Riptide Beam', power: 9, cooldown: 20, description: 'Beam in a line, hits everything', isSignature: false, kind: 'beam' },
+      { name: 'Deluge', power: 12, cooldown: 22, description: 'Wide AoE, -DEF all enemies', isSignature: false, kind: 'blast', radius: 65, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 4000 },
     ],
   },
   nettlehide: {
@@ -652,13 +652,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 6,   max: 15   },
     },
     moves: [
-      { name: 'Thorn Jab', power: 6, cooldown: 3, description: 'Quick spine thrust that ensnares the target in briar', isSignature: false, kind: 'strike', appliesBriar: 2, briarDuration: 3000 },
-      { name: 'Needle Rush', power: 9, cooldown: 9, description: 'Charges through the target trailing thorns, repositioning behind it', isSignature: true, kind: 'pierce', repositions: true, appliesBriar: 2, briarDuration: 3000 },
+      { name: 'Thorn Jab', power: 6, cooldown: 3, description: 'Strike, applies briar', isSignature: false, kind: 'strike', appliesBriar: 2, briarDuration: 3000 },
+      { name: 'Needle Rush', power: 9, cooldown: 9, description: 'Pierce through, reposition + briar', isSignature: true, kind: 'pierce', repositions: true, appliesBriar: 2, briarDuration: 3000 },
     ],
     upgradeMoves: [
-      { name: 'Barb Spin', power: 7, cooldown: 7, description: 'Spins in a whirl of spines, briar-snaring every enemy caught in the radius', isSignature: false, kind: 'spin', radius: 50, appliesBriar: 2, briarDuration: 3500, attackAnim: 'attack', attackAnimDelay: 350 },
-      { name: 'Quill Burst', power: 5, cooldown: 5, description: 'Launches a volley of sharp quills at nearby targets', isSignature: false, kind: 'barrage', hits: 3, appliesBriar: 1, briarDuration: 3000 },
-      { name: 'Thornwall Charge', power: 11, cooldown: 12, description: 'Crashes through a line of enemies leaving heavy briar on everything in its path', isSignature: false, kind: 'pierce', dashThrough: true, appliesBriar: 3, briarDuration: 4000 },
+      { name: 'Barb Spin', power: 7, cooldown: 7, description: 'Spin AoE, briar all nearby', isSignature: false, kind: 'spin', radius: 50, appliesBriar: 2, briarDuration: 3500, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Quill Burst', power: 5, cooldown: 5, description: 'Hits 3 targets with quills', isSignature: false, kind: 'barrage', hits: 3, appliesBriar: 1, briarDuration: 3000 },
+      { name: 'Thornwall Charge', power: 11, cooldown: 12, description: 'Pierce line, heavy briar all hit', isSignature: false, kind: 'pierce', dashThrough: true, appliesBriar: 3, briarDuration: 4000 },
     ],
   },
   veilseer: {
@@ -684,13 +684,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 10,  max: 19   },
     },
     moves: [
-      { name: 'Shadow Mend', power: 7, cooldown: 5, description: 'Wraps the most injured ally in dark energy, healing them; heals self if no ally needs it', isSignature: false, kind: 'heal', selfHealFallback: true },
-      { name: 'Dusk Veil', power: 6, cooldown: 10, description: 'Shrouds all nearby enemies in darkness, blinding them and boosting own evasion', isSignature: true, kind: 'blast', radius: 60, appliesBlind: 12, blindDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 10, selfBuffDuration: 3000 },
+      { name: 'Shadow Mend', power: 7, cooldown: 5, description: 'Heal most injured ally (or self)', isSignature: false, kind: 'heal', selfHealFallback: true },
+      { name: 'Dusk Veil', power: 6, cooldown: 10, description: 'AoE blind, +evasion self', isSignature: true, kind: 'blast', radius: 60, appliesBlind: 12, blindDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 10, selfBuffDuration: 3000 },
     ],
     upgradeMoves: [
-      { name: 'Hex Ward', power: 0, cooldown: 12, description: 'Places a protective ward on the lowest-HP ally, shielding them and reflecting damage', isSignature: false, kind: 'shield', duration: 4000, thornsAmount: 2 },
-      { name: 'Soul Siphon', power: 7, cooldown: 6, description: 'Drains life from the target and channels it to the most injured ally', isSignature: false, kind: 'drain', drainRatio: 0.4, attackAnim: 'attack', attackAnimDelay: 350 },
-      { name: 'Eclipse Shroud', power: 8, cooldown: 16, description: 'Plunges the battlefield in darkness — blinds all enemies and rallies allies with boosted evasion', isSignature: false, kind: 'blast', radius: 70, appliesBlind: 18, blindDuration: 4000, selfBuffStat: 'evasion', selfBuffAmount: 15, selfBuffDuration: 4000 },
+      { name: 'Hex Ward', power: 0, cooldown: 12, description: 'Shield lowest-HP ally, reflects dmg', isSignature: false, kind: 'shield', duration: 4000, thornsAmount: 2 },
+      { name: 'Soul Siphon', power: 7, cooldown: 6, description: 'Drain life, heals most injured ally', isSignature: false, kind: 'drain', drainRatio: 0.4, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Eclipse Shroud', power: 8, cooldown: 16, description: 'Wide AoE blind, +evasion allies', isSignature: false, kind: 'blast', radius: 70, appliesBlind: 18, blindDuration: 4000, selfBuffStat: 'evasion', selfBuffAmount: 15, selfBuffDuration: 4000 },
     ],
   },
   cindertail: {
@@ -716,13 +716,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 6,   max: 15   },
     },
     moves: [
-      { name: 'Fireball', power: 7, cooldown: 4, description: 'Lobs a ball of fire that explodes on impact, igniting the target', isSignature: false, kind: 'blast', radius: 30, appliesIgnite: 2, attackAnim: 'attack', attackAnimDelay: 350 },
-      { name: 'Firestorm', power: 11, cooldown: 20, description: 'Channels a sweeping beam of flame, scorching everything in a straight line for 3 seconds', isSignature: true, kind: 'beam' },
+      { name: 'Fireball', power: 7, cooldown: 4, description: 'Explodes on impact, ignites', isSignature: false, kind: 'blast', radius: 30, appliesIgnite: 2, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Firestorm', power: 11, cooldown: 20, description: 'Beam in a line, hits everything for 3s', isSignature: true, kind: 'beam' },
     ],
     upgradeMoves: [
-      { name: 'Scorch Volley', power: 5, cooldown: 5, description: 'Rapid bolts of flame that ignite multiple targets', isSignature: false, kind: 'barrage', hits: 3, appliesIgnite: 1 },
-      { name: 'Magma Pool', power: 9, cooldown: 10, description: 'Erupts a pool of lava beneath enemies, igniting and slowing everything caught in it', isSignature: false, kind: 'blast', radius: 50, appliesIgnite: 3 },
-      { name: 'Inferno Blast', power: 14, cooldown: 22, description: 'Detonates in a massive explosion of flame, heavily igniting all enemies in a wide radius', isSignature: false, kind: 'blast', radius: 70, appliesIgnite: 5 },
+      { name: 'Scorch Volley', power: 5, cooldown: 5, description: 'Hits 3, ignites each', isSignature: false, kind: 'barrage', hits: 3, appliesIgnite: 1 },
+      { name: 'Magma Pool', power: 9, cooldown: 10, description: 'AoE blast, heavy ignite all in range', isSignature: false, kind: 'blast', radius: 50, appliesIgnite: 3 },
+      { name: 'Inferno Blast', power: 14, cooldown: 22, description: 'Wide AoE, massive ignite all enemies', isSignature: false, kind: 'blast', radius: 70, appliesIgnite: 5 },
     ],
   },
   dawnstrike: {
@@ -748,13 +748,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 8,   max: 17   },
     },
     moves: [
-      { name: 'Flash Claw', power: 6, cooldown: 3, description: 'Strikes with blinding speed, dazzling the target and reducing their accuracy', isSignature: false, kind: 'strike', appliesBlind: 8, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 250 },
-      { name: 'Radiant Dash', power: 10, cooldown: 9, description: 'Dashes through the target in a streak of light, blinding everything in the path', isSignature: true, kind: 'pierce', dashThrough: true, appliesBlind: 12, blindDuration: 2500 },
+      { name: 'Flash Claw', power: 6, cooldown: 3, description: 'Fast strike, blinds target', isSignature: false, kind: 'strike', appliesBlind: 8, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 250 },
+      { name: 'Radiant Dash', power: 10, cooldown: 9, description: 'Pierce line, blinds all hit', isSignature: true, kind: 'pierce', dashThrough: true, appliesBlind: 12, blindDuration: 2500 },
     ],
     upgradeMoves: [
-      { name: 'Sunblade', power: 8, cooldown: 5, description: 'A precise cut of concentrated light that crits more often against blinded targets', isSignature: false, kind: 'strike', appliesBlind: 5, blindDuration: 2000 },
-      { name: 'Prism Rush', power: 7, cooldown: 7, description: 'Dashes to the target and repositions behind it, trailing blinding light', isSignature: false, kind: 'pierce', repositions: true, appliesBlind: 10, blindDuration: 2500 },
-      { name: 'Nova Strike', power: 12, cooldown: 14, description: 'Leaps to the target in a burst of radiance, blinding all nearby enemies on landing', isSignature: false, kind: 'leap', appliesSlowOnLand: true, duration: 2500 },
+      { name: 'Sunblade', power: 8, cooldown: 5, description: 'Strike, blinds target', isSignature: false, kind: 'strike', appliesBlind: 5, blindDuration: 2000 },
+      { name: 'Prism Rush', power: 7, cooldown: 7, description: 'Dash through, reposition + blind', isSignature: false, kind: 'pierce', repositions: true, appliesBlind: 10, blindDuration: 2500 },
+      { name: 'Nova Strike', power: 12, cooldown: 14, description: 'Leap attack, slows nearby on land', isSignature: false, kind: 'leap', appliesSlowOnLand: true, duration: 2500 },
     ],
   },
   bogweft: {
@@ -780,13 +780,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 10,  max: 19   },
     },
     moves: [
-      { name: 'Mud Sling', power: 5, cooldown: 3, description: 'Hurls a glob of thick mud that slows and blinds the target', isSignature: false, kind: 'slow', duration: 3000, appliesBlind: 10, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 300 },
-      { name: 'Quagmire', power: 9, cooldown: 11, description: 'Opens a sinkhole beneath enemies, rooting and crushing their defenses', isSignature: true, kind: 'blast', radius: 55, appliesStatDebuff: 'speed', debuffAmount: 25, debuffDuration: 3000 },
+      { name: 'Mud Sling', power: 5, cooldown: 3, description: 'Slows and blinds target', isSignature: false, kind: 'slow', duration: 3000, appliesBlind: 10, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Quagmire', power: 9, cooldown: 11, description: 'AoE blast, heavy -SPD all in range', isSignature: true, kind: 'blast', radius: 55, appliesStatDebuff: 'speed', debuffAmount: 25, debuffDuration: 3000 },
     ],
     upgradeMoves: [
-      { name: 'Tar Pit', power: 6, cooldown: 6, description: 'Traps the target in sticky tar, fully rooting them in place', isSignature: false, kind: 'slow', rootTarget: true, duration: 2000 },
-      { name: 'Sandblast', power: 7, cooldown: 8, description: 'Whips a storm of sand and grit, blinding all enemies in the area', isSignature: false, kind: 'spin', radius: 55, appliesBlind: 15, blindDuration: 3000 },
-      { name: 'Earthen Tomb', power: 11, cooldown: 16, description: 'Encases a target in stone, stunning them and shattering their armor', isSignature: false, kind: 'blast', radius: 45, stunsRadius: true, stunDuration: 800, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 4000 },
+      { name: 'Tar Pit', power: 6, cooldown: 6, description: 'Roots target in place', isSignature: false, kind: 'slow', rootTarget: true, duration: 2000 },
+      { name: 'Sandblast', power: 7, cooldown: 8, description: 'Spin AoE, blinds all nearby', isSignature: false, kind: 'spin', radius: 55, appliesBlind: 15, blindDuration: 3000 },
+      { name: 'Earthen Tomb', power: 11, cooldown: 16, description: 'AoE stun + -DEF debuff', isSignature: false, kind: 'blast', radius: 45, stunsRadius: true, stunDuration: 800, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 4000 },
     ],
   },
   dewspine: {
@@ -812,13 +812,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 8,   max: 17   },
     },
     moves: [
-      { name: 'Ice Spike', power: 7, cooldown: 3, description: 'Launches a razor-sharp ice shard that shreds the target\'s armor', isSignature: false, kind: 'strike', appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
-      { name: 'Hailstorm', power: 5, cooldown: 8, description: 'Pelts multiple enemies with icy shards, each hit cracking their defenses', isSignature: true, kind: 'barrage', hits: 4, appliesStatDebuff: 'defense', debuffAmount: 1, debuffDuration: 3000 },
+      { name: 'Ice Spike', power: 7, cooldown: 3, description: 'Ice shard, -DEF debuff', isSignature: false, kind: 'strike', appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Hailstorm', power: 5, cooldown: 8, description: 'Hits 4, -DEF debuff each', isSignature: true, kind: 'barrage', hits: 4, appliesStatDebuff: 'defense', debuffAmount: 1, debuffDuration: 3000 },
     ],
     upgradeMoves: [
-      { name: 'Frost Pierce', power: 9, cooldown: 7, description: 'Fires an ice lance that punches through the target and repositions behind them', isSignature: false, kind: 'pierce', repositions: true, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
-      { name: 'Cryo Blast', power: 10, cooldown: 12, description: 'Detonates a freezing explosion that slows and armor-strips all enemies caught in range', isSignature: false, kind: 'blast', radius: 50, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3500 },
-      { name: 'Glacial Barrage', power: 7, cooldown: 10, description: 'Unleashes a flurry of ice shards that refract between targets, each shattering armor', isSignature: false, kind: 'barrage', hits: 5, refracts: true, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Frost Pierce', power: 9, cooldown: 7, description: 'Pierce through, reposition + -DEF', isSignature: false, kind: 'pierce', repositions: true, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
+      { name: 'Cryo Blast', power: 10, cooldown: 12, description: 'AoE blast, heavy -DEF all in range', isSignature: false, kind: 'blast', radius: 50, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3500 },
+      { name: 'Glacial Barrage', power: 7, cooldown: 10, description: 'Refracting shards hit 5, -DEF each', isSignature: false, kind: 'barrage', hits: 5, refracts: true, appliesStatDebuff: 'defense', debuffAmount: 2, debuffDuration: 3000 },
     ],
   },
   crestshrike: {
@@ -844,13 +844,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 6,   max: 15   },
     },
     moves: [
-      { name: 'Stone Fang', power: 7, cooldown: 3, description: 'Bites with mineral-hardened jaws, marking the target for amplified damage', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.2, markDuration: 4000, attackAnim: 'attack', attackAnimDelay: 300 },
-      { name: 'Burrow Strike', power: 11, cooldown: 10, description: 'Tunnels underground and erupts beneath the target with devastating force', isSignature: true, kind: 'leap', shadowStep: true, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3000 },
+      { name: 'Stone Fang', power: 7, cooldown: 3, description: 'Bite, marks for +20% dmg taken', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.2, markDuration: 4000, attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Burrow Strike', power: 11, cooldown: 10, description: 'Burrow to target, -DEF on hit', isSignature: true, kind: 'leap', shadowStep: true, appliesStatDebuff: 'defense', debuffAmount: 3, debuffDuration: 3000 },
     ],
     upgradeMoves: [
-      { name: 'Talon Rend', power: 8, cooldown: 5, description: 'Tears into the target with hardened claws, dealing bonus damage to wounded foes', isSignature: false, kind: 'strike', executeBonusPct: 0.2 },
-      { name: 'Earth Dive', power: 6, cooldown: 6, description: 'Burrows to a distant target, slowing them on arrival', isSignature: false, kind: 'leap', shadowStep: true, appliesSlowOnLand: true, duration: 2500 },
-      { name: 'Seismic Rend', power: 12, cooldown: 14, description: 'Erupts from the ground with crushing force, marking and executing wounded targets', isSignature: false, kind: 'pierce', executeBonusPct: 0.3, appliesHuntersMark: true, markBonus: 0.3, markDuration: 5000 },
+      { name: 'Talon Rend', power: 8, cooldown: 5, description: 'Strike, execute bonus on wounded', isSignature: false, kind: 'strike', executeBonusPct: 0.2 },
+      { name: 'Earth Dive', power: 6, cooldown: 6, description: 'Burrow to target, slows on land', isSignature: false, kind: 'leap', shadowStep: true, appliesSlowOnLand: true, duration: 2500 },
+      { name: 'Seismic Rend', power: 12, cooldown: 14, description: 'Pierce, mark + execute on wounded', isSignature: false, kind: 'pierce', executeBonusPct: 0.3, appliesHuntersMark: true, markBonus: 0.3, markDuration: 5000 },
     ],
   },
   rootlash: {
@@ -876,13 +876,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 8,   max: 17   },
     },
     moves: [
-      { name: 'Vine Whip', power: 6, cooldown: 3, description: 'Lashes the target with a thorny vine, pulling them closer and ensnaring them in briar', isSignature: false, kind: 'strike', pullsTarget: true, appliesBriar: 1, briarDuration: 3000, attackAnim: 'attack', attackAnimDelay: 350 },
-      { name: 'Thorn Volley', power: 5, cooldown: 7, description: 'Unleashes a barrage of poison-tipped thorns that refract between enemies', isSignature: true, kind: 'barrage', hits: 4, refracts: true, appliesBriar: 2, briarDuration: 3500 },
+      { name: 'Vine Whip', power: 6, cooldown: 3, description: 'Pulls target closer, applies briar', isSignature: false, kind: 'strike', pullsTarget: true, appliesBriar: 1, briarDuration: 3000, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Thorn Volley', power: 5, cooldown: 7, description: 'Refracting thorns, briar on 4 targets', isSignature: true, kind: 'barrage', hits: 4, refracts: true, appliesBriar: 2, briarDuration: 3500 },
     ],
     upgradeMoves: [
-      { name: 'Lash Through', power: 9, cooldown: 8, description: 'Whips through a line of enemies, briar-snaring everything in the path', isSignature: false, kind: 'pierce', dashThrough: true, appliesBriar: 2, briarDuration: 3500 },
-      { name: 'Root Slam', power: 10, cooldown: 10, description: 'Slams a massive root tendril into the ground, stunning and ensnaring enemies in a radius', isSignature: false, kind: 'blast', radius: 50, stunsRadius: true, stunDuration: 600, appliesBriar: 2, briarDuration: 3000 },
-      { name: 'Briar Storm', power: 8, cooldown: 12, description: 'Unleashes a storm of thorns in all directions, heavily ensnaring everything nearby', isSignature: false, kind: 'spin', radius: 60, appliesBriar: 3, briarDuration: 5000 },
+      { name: 'Lash Through', power: 9, cooldown: 8, description: 'Pierce line, briar all hit', isSignature: false, kind: 'pierce', dashThrough: true, appliesBriar: 2, briarDuration: 3500 },
+      { name: 'Root Slam', power: 10, cooldown: 10, description: 'AoE stun + briar all in range', isSignature: false, kind: 'blast', radius: 50, stunsRadius: true, stunDuration: 600, appliesBriar: 2, briarDuration: 3000 },
+      { name: 'Briar Storm', power: 8, cooldown: 12, description: 'Spin AoE, heavy briar all nearby', isSignature: false, kind: 'spin', radius: 60, appliesBriar: 3, briarDuration: 5000 },
     ],
   },
   smolderpaw: {
@@ -908,13 +908,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 8,   max: 17   },
     },
     moves: [
-      { name: 'Ember Fang', power: 7, cooldown: 3, description: 'A scorching bite that marks the target — marked enemies take amplified damage from all sources', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.2, markDuration: 4000, appliesIgnite: 1, attackAnim: 'attack', attackAnimDelay: 300 },
-      { name: 'Pounce', power: 10, cooldown: 10, description: 'Leaps onto the target in a burst of flame, igniting them heavily on landing', isSignature: true, kind: 'leap', appliesIgnite: 3, appliesSlowOnLand: true, duration: 2000 },
+      { name: 'Ember Fang', power: 7, cooldown: 3, description: 'Bite, marks for +20% dmg + ignite', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.2, markDuration: 4000, appliesIgnite: 1, attackAnim: 'attack', attackAnimDelay: 300 },
+      { name: 'Pounce', power: 10, cooldown: 10, description: 'Leap attack, heavy ignite + slow', isSignature: true, kind: 'leap', appliesIgnite: 3, appliesSlowOnLand: true, duration: 2000 },
     ],
     upgradeMoves: [
-      { name: 'Sear Mark', power: 8, cooldown: 5, description: 'Brands the target with fire, marking them for amplified damage and stacking ignite', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.3, markDuration: 5000, appliesIgnite: 2 },
-      { name: 'Blaze Rush', power: 9, cooldown: 8, description: 'Dashes through the target trailing fire, repositioning behind it', isSignature: false, kind: 'pierce', repositions: true, appliesIgnite: 2 },
-      { name: 'Inferno Takedown', power: 13, cooldown: 15, description: 'Phases into smoke, then erupts on the target with devastating execute damage', isSignature: false, kind: 'pierce', phasesBeforeStrike: true, executeBonusPct: 0.25, appliesIgnite: 3 },
+      { name: 'Sear Mark', power: 8, cooldown: 5, description: 'Mark for +30% dmg + ignite', isSignature: false, kind: 'strike', appliesHuntersMark: true, markBonus: 0.3, markDuration: 5000, appliesIgnite: 2 },
+      { name: 'Blaze Rush', power: 9, cooldown: 8, description: 'Dash through, reposition + ignite', isSignature: false, kind: 'pierce', repositions: true, appliesIgnite: 2 },
+      { name: 'Inferno Takedown', power: 13, cooldown: 15, description: 'Phase, then execute + ignite', isSignature: false, kind: 'pierce', phasesBeforeStrike: true, executeBonusPct: 0.25, appliesIgnite: 3 },
     ],
   },
   curseclaw: {
@@ -940,13 +940,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 12,  max: 21   },
     },
     moves: [
-      { name: 'Hex Bolt', power: 6, cooldown: 3, description: 'A cursed projectile that weakens the target\'s attack power and blinds them', isSignature: false, kind: 'slow', duration: 3000, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000, appliesBlind: 8, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 350 },
-      { name: 'Nightmare Burst', power: 10, cooldown: 11, description: 'Erupts dark energy that blinds and hexes all enemies in range, boosting own evasion', isSignature: true, kind: 'blast', radius: 60, appliesBlind: 15, blindDuration: 3000, appliesStatDebuff: 'attack', debuffAmount: 3, debuffDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 12, selfBuffDuration: 2500 },
+      { name: 'Hex Bolt', power: 6, cooldown: 3, description: 'Slows, blinds, -ATK debuff', isSignature: false, kind: 'slow', duration: 3000, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000, appliesBlind: 8, blindDuration: 2000, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Nightmare Burst', power: 10, cooldown: 11, description: 'AoE blind + -ATK, +evasion self', isSignature: true, kind: 'blast', radius: 60, appliesBlind: 15, blindDuration: 3000, appliesStatDebuff: 'attack', debuffAmount: 3, debuffDuration: 3000, selfBuffStat: 'evasion', selfBuffAmount: 12, selfBuffDuration: 2500 },
     ],
     upgradeMoves: [
-      { name: 'Curse Wave', power: 7, cooldown: 7, description: 'Sweeps a wave of dark energy, weakening and slowing all enemies it hits', isSignature: false, kind: 'spin', radius: 55, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000, appliesSlowToAllHit: true, duration: 2500 },
-      { name: 'Soul Drain', power: 8, cooldown: 8, description: 'Leeches life force from the target, draining health and crippling their speed', isSignature: false, kind: 'drain', drainRatio: 0.35, appliesStatDebuff: 'speed', debuffAmount: 20, debuffDuration: 3000 },
-      { name: 'Abyssal Gaze', power: 9, cooldown: 14, description: 'Fixes a baleful glare on the battlefield, heavily blinding and weakening all enemies in a wide area', isSignature: false, kind: 'blast', radius: 70, appliesBlind: 20, blindDuration: 4000, appliesStatDebuff: 'attack', debuffAmount: 4, debuffDuration: 4000 },
+      { name: 'Curse Wave', power: 7, cooldown: 7, description: 'Spin AoE, -ATK + slow all hit', isSignature: false, kind: 'spin', radius: 55, appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000, appliesSlowToAllHit: true, duration: 2500 },
+      { name: 'Soul Drain', power: 8, cooldown: 8, description: 'Drain life, -SPD debuff', isSignature: false, kind: 'drain', drainRatio: 0.35, appliesStatDebuff: 'speed', debuffAmount: 20, debuffDuration: 3000 },
+      { name: 'Abyssal Gaze', power: 9, cooldown: 14, description: 'Wide AoE, heavy blind + -ATK all', isSignature: false, kind: 'blast', radius: 70, appliesBlind: 20, blindDuration: 4000, appliesStatDebuff: 'attack', debuffAmount: 4, debuffDuration: 4000 },
     ],
   },
   sunfleece: {
@@ -972,13 +972,13 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 5,   max: 12   },
     },
     moves: [
-      { name: 'Radiant Heal', power: 8, cooldown: 5, description: 'Bathes the most injured ally in warm light, restoring their health; heals self if no ally needs it', isSignature: false, kind: 'heal', selfHealFallback: true },
-      { name: 'Sunburst', power: 8, cooldown: 12, description: 'Erupts in a burst of holy light, blinding all nearby enemies and rallying allies', isSignature: true, kind: 'blast', radius: 60, appliesBlind: 12, blindDuration: 3000, attackAnim: 'attack', attackAnimDelay: 350 },
+      { name: 'Radiant Heal', power: 8, cooldown: 5, description: 'Heal most injured ally (or self)', isSignature: false, kind: 'heal', selfHealFallback: true },
+      { name: 'Sunburst', power: 8, cooldown: 12, description: 'AoE blast, blinds all nearby', isSignature: true, kind: 'blast', radius: 60, appliesBlind: 12, blindDuration: 3000, attackAnim: 'attack', attackAnimDelay: 350 },
     ],
     upgradeMoves: [
-      { name: 'Warmth Aura', power: 0, cooldown: 10, description: 'Wraps the lowest-HP ally in a protective shield of light that reflects damage', isSignature: false, kind: 'shield', duration: 4000, thornsAmount: 2 },
-      { name: 'Guiding Light', power: 5, cooldown: 6, description: 'Fires a bolt of light that weakens the target and boosts own defense', isSignature: false, kind: 'strike', appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000, selfBuffStat: 'defense', selfBuffAmount: 3, selfBuffDuration: 3000 },
-      { name: 'Sanctuary', power: 10, cooldown: 20, description: 'Calls down a pillar of radiance that heavily blinds all enemies and shields the caster', isSignature: false, kind: 'blast', radius: 70, appliesBlind: 20, blindDuration: 4000 },
+      { name: 'Warmth Aura', power: 0, cooldown: 10, description: 'Shield lowest-HP ally, reflects dmg', isSignature: false, kind: 'shield', duration: 4000, thornsAmount: 2 },
+      { name: 'Guiding Light', power: 5, cooldown: 6, description: 'Strike, -ATK target + DEF self', isSignature: false, kind: 'strike', appliesStatDebuff: 'attack', debuffAmount: 2, debuffDuration: 3000, selfBuffStat: 'defense', selfBuffAmount: 3, selfBuffDuration: 3000 },
+      { name: 'Sanctuary', power: 10, cooldown: 20, description: 'Wide AoE, heavy blind all enemies', isSignature: false, kind: 'blast', radius: 70, appliesBlind: 20, blindDuration: 4000 },
     ],
   },
 
@@ -1006,14 +1006,14 @@ export const RIFTLING_TEMPLATES: Record<
       evasion:     { min: 0,    max: 0    },
     },
     moves: [
-      { name: 'Rift Slam', power: 8, cooldown: 8, description: 'Slams the ground with rift energy, burning everything in a wide radius', isSignature: false, kind: 'blast', radius: 55, appliesIgnite: 2, attackAnim: 'aoe', attackAnimDelay: 250 },
-      { name: 'Rift Charge', power: 9, cooldown: 12, description: 'Charges through the target trailing dark energy, repositioning behind them', isSignature: true, kind: 'pierce', repositions: true, appliesSlowOnLand: true, duration: 2000, attackAnim: 'bite', attackAnimDelay: 200 },
-      { name: 'Void Drain', power: 7, cooldown: 14, description: 'Rips life force from the target, healing itself', isSignature: false, kind: 'drain', drainRatio: 0.35, attackAnim: 'drain', attackAnimDelay: 300 },
+      { name: 'Rift Slam', power: 8, cooldown: 8, description: 'AoE blast, ignites all in range', isSignature: false, kind: 'blast', radius: 55, appliesIgnite: 2, attackAnim: 'aoe', attackAnimDelay: 250 },
+      { name: 'Rift Charge', power: 9, cooldown: 12, description: 'Pierce through, reposition + slow', isSignature: true, kind: 'pierce', repositions: true, appliesSlowOnLand: true, duration: 2000, attackAnim: 'bite', attackAnimDelay: 200 },
+      { name: 'Void Drain', power: 7, cooldown: 14, description: 'Drain life, heal self', isSignature: false, kind: 'drain', drainRatio: 0.35, attackAnim: 'drain', attackAnimDelay: 300 },
     ],
     upgradeMoves: [
-      { name: 'Rift Vortex', power: 11, cooldown: 14, description: 'Spins with rift energy, pulling enemies inward and searing them', isSignature: false, kind: 'spin', radius: 55, appliesIgnite: 3, attackAnim: 'aoe', attackAnimDelay: 250 },
-      { name: 'Cataclysm', power: 15, cooldown: 22, description: 'Unleashes a devastating rift explosion, stunning and igniting all enemies in range', isSignature: false, kind: 'blast', radius: 65, appliesIgnite: 4, stunsRadius: true, stunDuration: 800, attackAnim: 'aoe', attackAnimDelay: 300 },
-      { name: 'Void Drain', power: 7, cooldown: 14, description: 'Rips life force from the target, healing itself', isSignature: false, kind: 'drain', drainRatio: 0.35, attackAnim: 'drain', attackAnimDelay: 300 },
+      { name: 'Rift Vortex', power: 11, cooldown: 14, description: 'Spin AoE, ignites all nearby', isSignature: false, kind: 'spin', radius: 55, appliesIgnite: 3, attackAnim: 'aoe', attackAnimDelay: 250 },
+      { name: 'Cataclysm', power: 15, cooldown: 22, description: 'Wide AoE, stun + ignite all', isSignature: false, kind: 'blast', radius: 65, appliesIgnite: 4, stunsRadius: true, stunDuration: 800, attackAnim: 'aoe', attackAnimDelay: 300 },
+      { name: 'Void Drain', power: 7, cooldown: 14, description: 'Drain life, heal self', isSignature: false, kind: 'drain', drainRatio: 0.35, attackAnim: 'drain', attackAnimDelay: 300 },
     ],
   },
 };
