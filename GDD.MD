@@ -328,3 +328,5 @@ Titles, trainer outfits, hub decorations, ritfling skins, music — no balance i
 - Decision menus always fully pause the clock
 - Ritflings fight automatically; players command teams, not individuals
 - Synergies surface in UI; players should never need a wiki
+
+TODO:

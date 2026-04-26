@@ -64,32 +64,27 @@ test.describe('Dungeon Structure', () => {
     expect(bossRooms[0].template.enemySpawns.length).toBeGreaterThan(0);
   });
 
-  test('L1 dungeon has 5 regular branches', async ({ page }) => {
+  test('L1 dungeon has 6 regular branches', async ({ page }) => {
     await page.goto('/');
     await waitForGameReady(page);
     await dismissTrinketSelect(page);
 
     const dungeon = await gs<any>(page, 'getDungeon()');
-    // branches array contains the 5 regular branches (key path and boss are separate)
-    expect(dungeon.branches).toHaveLength(5);
+    expect(dungeon.branches).toHaveLength(6);
     for (const branch of dungeon.branches) {
       expect(branch.kind).toBe('regular');
       expect(branch.roomIds.length).toBeGreaterThanOrEqual(3);
     }
   });
 
-  test('key path and boss doors start locked', async ({ page }) => {
+  test('boss door starts locked', async ({ page }) => {
     await page.goto('/');
     await waitForGameReady(page);
     await dismissTrinketSelect(page);
 
     const dungeon = await gs<any>(page, 'getDungeon()');
-    // Key path is slot 6, boss is slot 7
-    const keyDoor = dungeon.doors.find((d: any) => d.slot === 6);
     const bossDoor = dungeon.doors.find((d: any) => d.slot === 7);
 
-    expect(keyDoor).toBeDefined();
-    expect(keyDoor.locked).toBe(true);
     expect(bossDoor).toBeDefined();
     expect(bossDoor.locked).toBe(true);
   });

@@ -1257,27 +1257,84 @@ export function createRiftlingAtLevel(key: string, targetLevel: number): PartyRi
 
 // --- Type Synergy system ---
 
+export interface SynergyTier {
+  buffs: Partial<Record<StatKey, number>>;
+  attackSpeedMult?: number;
+  special?: string;
+  description: string;
+}
+
 export interface TypeSynergy {
   type: string;
   name: string;
   description: string;
-  /** Stat buffs applied to matching CombatUnits at combat start. */
   buffs: Partial<Record<StatKey, number>>;
-  /** Special effect key (e.g. 'regen') for effects that aren't simple stat buffs. */
   special?: string;
+  tiers: [SynergyTier, SynergyTier, SynergyTier];
 }
 
-/**
- * Type synergy definitions — activate when 2+ active riftlings share an element type.
- * Bonuses are flat values applied to CombatUnit stats at encounter start.
- */
+export function getSynergyTier(count: number): number {
+  if (count >= 4) return 2;
+  if (count >= 3) return 1;
+  if (count >= 2) return 0;
+  return -1;
+}
+
 export const TYPE_SYNERGIES: Record<string, TypeSynergy> = {
-  fire:   { type: 'fire',   name: 'Blaze',     description: '+3 Attack',           buffs: { attack: 3 } },
-  water:  { type: 'water',  name: 'Tidewall',  description: '+2 Defense',          buffs: { defense: 2 } },
-  earth:  { type: 'earth',  name: 'Bedrock',   description: '+15 Max HP',          buffs: { hp: 15 } },
-  nature: { type: 'nature', name: 'Overgrowth', description: 'Regen 2 HP/s',       buffs: {}, special: 'regen' },
-  light:  { type: 'light',  name: 'Radiance',  description: '+8 Crit Rate',        buffs: { critRate: 8 } },
-  dark:   { type: 'dark',   name: 'Eclipse',   description: '+6 Evasion',          buffs: { evasion: 6 } },
+  fire: {
+    type: 'fire', name: 'Blaze', description: '+2 Attack',
+    buffs: { attack: 2 },
+    tiers: [
+      { buffs: { attack: 2 }, description: '(2) +2 Attack' },
+      { buffs: { attack: 5 }, description: '(3) +5 Attack' },
+      { buffs: { attack: 8 }, description: '(4) +8 Attack' },
+    ],
+  },
+  water: {
+    type: 'water', name: 'Tidewall', description: '+2 Defense',
+    buffs: { defense: 2 },
+    tiers: [
+      { buffs: { defense: 2 }, description: '(2) +2 Defense' },
+      { buffs: { defense: 4 }, description: '(3) +4 Defense' },
+      { buffs: { defense: 6 }, description: '(4) +6 Defense' },
+    ],
+  },
+  earth: {
+    type: 'earth', name: 'Bedrock', description: '+10 Max HP',
+    buffs: { hp: 10 },
+    tiers: [
+      { buffs: { hp: 10 }, description: '(2) +10 Max HP' },
+      { buffs: { hp: 25 }, description: '(3) +25 Max HP' },
+      { buffs: { hp: 40 }, description: '(4) +40 Max HP' },
+    ],
+  },
+  nature: {
+    type: 'nature', name: 'Overgrowth', description: 'Regen 1 HP/s',
+    buffs: {}, special: 'regen',
+    tiers: [
+      { buffs: {}, special: 'regen', description: '(2) Regen 1 HP/s' },
+      { buffs: {}, special: 'regen2', description: '(3) Regen 2 HP/s' },
+      { buffs: {}, special: 'regen3', description: '(4) Regen 3 HP/s' },
+    ],
+  },
+  light: {
+    type: 'light', name: 'Radiance', description: '+5 Crit Rate',
+    buffs: { critRate: 5 },
+    tiers: [
+      { buffs: { critRate: 5 }, description: '(2) +5 Crit Rate' },
+      { buffs: { critRate: 10 }, description: '(3) +10 Crit Rate' },
+      { buffs: { critRate: 16 }, description: '(4) +16 Crit Rate' },
+    ],
+  },
+  dark: {
+    type: 'dark', name: 'Eclipse', description: '+4 Evasion',
+    buffs: { evasion: 4 },
+    tiers: [
+      { buffs: { evasion: 4 }, description: '(2) +4 Evasion' },
+      { buffs: { evasion: 8 }, description: '(3) +8 Evasion' },
+      { buffs: { evasion: 12 }, description: '(4) +12 Evasion' },
+    ],
+  },
 };
 
 /** Element type display colors for UI. */
@@ -1331,26 +1388,76 @@ export interface RoleSynergy {
   role: Role;
   name: string;
   description: string;
-  /** Stat buffs applied to matching CombatUnits at combat start. */
   buffs: Partial<Record<StatKey, number>>;
-  /** Multiplier applied to attackCooldown (ms). <1 = faster, >1 = slower. */
   attackSpeedMult?: number;
-  /** Special effect key (e.g. 'regen') for effects that aren't simple stat buffs. */
   special?: string;
+  tiers: [SynergyTier, SynergyTier, SynergyTier];
 }
 
-/**
- * Role synergy definitions — activate when 2+ active riftlings share a role (class).
- * Bonuses are flat values applied to CombatUnit stats at encounter start.
- */
 export const ROLE_SYNERGIES: Record<Role, RoleSynergy> = {
-  vanguard:   { role: 'vanguard',   name: 'Bulwark',     description: '+3 Defense',         buffs: { defense: 3 } },
-  skirmisher: { role: 'skirmisher', name: 'Flank',       description: '+6 Evasion',         buffs: { evasion: 6 } },
-  striker:    { role: 'striker',    name: 'Onslaught',   description: '+4 Attack',          buffs: { attack: 4 } },
-  caster:     { role: 'caster',     name: 'Attunement',  description: '+6 Crit Rate',       buffs: { critRate: 6 } },
-  hunter:     { role: 'hunter',     name: 'Volley',      description: '+15% Attack Speed',  buffs: {}, attackSpeedMult: 0.85 },
-  support:    { role: 'support',    name: 'Aegis',       description: 'Regen 1 HP/s',       buffs: {}, special: 'regen' },
-  hexer:      { role: 'hexer',      name: 'Malice',      description: '+3 Attack',          buffs: { attack: 3 } },
+  vanguard: {
+    role: 'vanguard', name: 'Bulwark', description: '+2 Defense',
+    buffs: { defense: 2 },
+    tiers: [
+      { buffs: { defense: 2 }, description: '(2) +2 Defense' },
+      { buffs: { defense: 5 }, description: '(3) +5 Defense' },
+      { buffs: { defense: 8 }, description: '(4) +8 Defense' },
+    ],
+  },
+  skirmisher: {
+    role: 'skirmisher', name: 'Flank', description: '+4 Evasion',
+    buffs: { evasion: 4 },
+    tiers: [
+      { buffs: { evasion: 4 }, description: '(2) +4 Evasion' },
+      { buffs: { evasion: 8 }, description: '(3) +8 Evasion' },
+      { buffs: { evasion: 12 }, description: '(4) +12 Evasion' },
+    ],
+  },
+  striker: {
+    role: 'striker', name: 'Onslaught', description: '+3 Attack',
+    buffs: { attack: 3 },
+    tiers: [
+      { buffs: { attack: 3 }, description: '(2) +3 Attack' },
+      { buffs: { attack: 6 }, description: '(3) +6 Attack' },
+      { buffs: { attack: 10 }, description: '(4) +10 Attack' },
+    ],
+  },
+  caster: {
+    role: 'caster', name: 'Attunement', description: '+4 Crit Rate',
+    buffs: { critRate: 4 },
+    tiers: [
+      { buffs: { critRate: 4 }, description: '(2) +4 Crit Rate' },
+      { buffs: { critRate: 8 }, description: '(3) +8 Crit Rate' },
+      { buffs: { critRate: 14 }, description: '(4) +14 Crit Rate' },
+    ],
+  },
+  hunter: {
+    role: 'hunter', name: 'Volley', description: '+10% Attack Speed',
+    buffs: {}, attackSpeedMult: 0.90,
+    tiers: [
+      { buffs: {}, attackSpeedMult: 0.90, description: '(2) +10% Attack Speed' },
+      { buffs: {}, attackSpeedMult: 0.80, description: '(3) +20% Attack Speed' },
+      { buffs: {}, attackSpeedMult: 0.70, description: '(4) +30% Attack Speed' },
+    ],
+  },
+  support: {
+    role: 'support', name: 'Aegis', description: 'Regen 1 HP/s',
+    buffs: {}, special: 'regen',
+    tiers: [
+      { buffs: {}, special: 'regen', description: '(2) Regen 1 HP/s' },
+      { buffs: {}, special: 'regen2', description: '(3) Regen 2 HP/s' },
+      { buffs: { defense: 2 }, special: 'regen2', description: '(4) Regen 2 HP/s, +2 Def' },
+    ],
+  },
+  hexer: {
+    role: 'hexer', name: 'Malice', description: '+2 Attack',
+    buffs: { attack: 2 },
+    tiers: [
+      { buffs: { attack: 2 }, description: '(2) +2 Attack' },
+      { buffs: { attack: 4, attackSpeed: 3 }, description: '(3) +4 Attack, +3 ASPD' },
+      { buffs: { attack: 6, attackSpeed: 8 }, description: '(4) +6 Attack, +8 ASPD' },
+    ],
+  },
 };
 
 /** Role display colors for UI (mirrors ROLE_COLORS in PartyScreen, as numeric hex). */

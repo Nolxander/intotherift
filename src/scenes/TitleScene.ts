@@ -11,8 +11,8 @@ const RIFTLING_POOL = [
   'lumoth', 'emberhound', 'tidecrawler', 'rootlash', 'cindertail',
 ];
 
-const WANDER_SPEED = 18;
-const SILHOUETTE_TINT = 0x181028;
+const WANDER_SPEED = 7;
+const SILHOUETTE_TINT = 0x2a1840;
 const FOG_PARTICLE_COUNT = 40;
 const RIFT_PARTICLE_COUNT = 24;
 
@@ -102,7 +102,7 @@ export class TitleScene extends Phaser.Scene {
     const elite = this.add.sprite(W / 2, H * 0.42, 'rift_elite_south')
       .setDepth(3)
       .setScale(3)
-      .setTint(0x2a1848)
+      .setTint(0x3a2060)
       .setAlpha(0);
 
     if (this.anims.exists('rift_elite_idle_south')) {
@@ -111,7 +111,7 @@ export class TitleScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: elite,
-      alpha: 0.55,
+      alpha: 0.7,
       duration: 5000,
       delay: 2000,
       ease: 'Sine.easeIn',
@@ -119,7 +119,7 @@ export class TitleScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: elite,
-      alpha: { from: 0.55, to: 0.35 },
+      alpha: { from: 0.7, to: 0.45 },
       duration: 4000,
       yoyo: true,
       repeat: -1,
@@ -314,7 +314,7 @@ export class TitleScene extends Phaser.Scene {
     // Fade in quickly
     this.tweens.add({
       targets: [sprite, shadow],
-      alpha: { from: 0, to: 0.7 },
+      alpha: { from: 0, to: 0.85 },
       duration: 1500 + Math.random() * 1000,
       delay: 300 + index * 400,
       ease: 'Sine.easeIn',

@@ -25,6 +25,32 @@ export function roomSavePlugin(): Plugin {
       // request.
       return () => {
         server.middlewares.use((req, res, next) => {
+          if (req.url === '/api/save-decoration-overrides' && req.method === 'POST') {
+            const chunks: Buffer[] = [];
+            req.on('data', (chunk: Buffer) => chunks.push(chunk));
+            req.on('end', () => {
+              try {
+                const body = Buffer.concat(chunks).toString('utf-8');
+                const overrides = JSON.parse(body);
+                const filePath = path.resolve(projectRoot, 'assets/decoration-overrides.json');
+                let existing: Record<string, unknown> = {};
+                if (fs.existsSync(filePath)) {
+                  try { existing = JSON.parse(fs.readFileSync(filePath, 'utf-8')); } catch {}
+                }
+                const merged = { ...existing, ...overrides };
+                fs.writeFileSync(filePath, JSON.stringify(merged, null, 2));
+                console.log(`[decoration-overrides] Saved ${Object.keys(overrides).length} override(s) to ${filePath}`);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ ok: true, count: Object.keys(merged).length }));
+              } catch (e) {
+                console.error('[decoration-overrides] Error:', e);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: String(e) }));
+              }
+            });
+            return;
+          }
+
           if (req.url !== '/api/save-room' || req.method !== 'POST') {
             next();
             return;

@@ -16,7 +16,7 @@ export interface RosterEntry {
 }
 
 export interface VictoryData {
-  timeRemaining: number;
+  elapsedTime: number;
   roster: RosterEntry[];
 }
 
@@ -31,7 +31,7 @@ export class VictoryScene extends Phaser.Scene {
       this.sound.play('music_title', { loop: true, volume: 0.5 });
     }
     const roster = data?.roster ?? [];
-    const timeRemaining = data?.timeRemaining ?? 0;
+    const elapsedTime = data?.elapsedTime ?? 0;
 
     this.add.rectangle(W / 2, H / 2, W, H, 0x0a0a14);
 
@@ -43,9 +43,9 @@ export class VictoryScene extends Phaser.Scene {
       strokeThickness: 4,
     }).setOrigin(0.5).setAlpha(0);
 
-    const mins = Math.floor(timeRemaining / 60);
-    const secs = Math.floor(timeRemaining % 60);
-    const sub = this.add.text(W / 2, 140, `You claimed the Rift Core with ${mins}:${secs.toString().padStart(2, '0')} to spare.`, {
+    const mins = Math.floor(elapsedTime / 60);
+    const secs = Math.floor(elapsedTime % 60);
+    const sub = this.add.text(W / 2, 140, `Rift sealed in ${mins}:${secs.toString().padStart(2, '0')}`, {
       fontFamily: 'monospace',
       fontSize: '10px',
       color: '#ddccaa',

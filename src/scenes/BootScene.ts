@@ -149,7 +149,7 @@ export class BootScene extends Phaser.Scene {
     if (directLoad) {
       this.waitForDeferredThen(() => this.scene.start('Dungeon'));
     } else {
-      this.scene.start('Title');
+      this.scene.launch('Title');
     }
   }
 
@@ -277,7 +277,7 @@ export class BootScene extends Phaser.Scene {
     }
 
     // Batch walk 8-frame: remaining riftlings not in title pool
-    const walkBatch8 = ['dewspine', 'nettlehide', 'smolderpaw', 'sunfleece'];
+    const walkBatch8 = ['crestshrike', 'dawnstrike', 'dewspine', 'nettlehide', 'smolderpaw', 'sunfleece'];
     for (const name of walkBatch8) {
       for (const dir of CARDINAL_DIRS) {
         for (let f = 0; f < 8; f++) {

@@ -100,8 +100,8 @@ test.describe('Smoke', () => {
     await waitForGameReady(page);
 
     const dungeon = await page.evaluate(() => (window as any).__gameState.getDungeon());
-    // L1 intro dungeon: hub(1) + 5 branches×3(15) + key path(5) + boss(1) + intro(3) = 25
-    expect(dungeon.rooms).toHaveLength(25);
+    // L1 intro dungeon: hub(1) + 6 branches×3(18) + boss(1) + intro(3) = 23
+    expect(dungeon.rooms).toHaveLength(23);
     // Exactly one boss room
     const bossRooms = dungeon.rooms.filter((r: any) => r.template.type === 'boss');
     expect(bossRooms).toHaveLength(1);

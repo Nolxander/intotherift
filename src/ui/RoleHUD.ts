@@ -6,6 +6,7 @@ import {
   ROLE_COLORS_HEX,
   RoleSynergy,
   getRoleCounts,
+  getSynergyTier,
 } from '../data/party';
 
 const FONT = 'monospace';
@@ -171,12 +172,17 @@ export class RoleHUD {
     const isActive = count >= 2;
 
     const title = `${row.synergy.name} (${row.role})`;
+    const activeTier = getSynergyTier(count);
+    const tierLines = row.synergy.tiers.map((t, i) => {
+      const marker = i === activeTier ? '>' : ' ';
+      return `${marker} ${t.description}`;
+    }).join('\n');
     const status = isActive
-      ? `Active (${count}/${count})`
+      ? ''
       : count === 1
-        ? `1 more to activate`
-        : `Need 2 to activate`;
-    const body = `${row.synergy.description}\n${status}`;
+        ? '1 more to activate'
+        : 'Need 2 to activate';
+    const body = status ? `${tierLines}\n${status}` : tierLines;
 
     this.tooltipTitle.setText(title);
     this.tooltipTitle.setPosition(x + 6, y + 4);

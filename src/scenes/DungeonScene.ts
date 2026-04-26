@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import {
   generateDungeon,
   generateTestDungeon,
+  resolveBranchOnEntry,
   Dungeon,
   DungeonRoom,
   BOSS_SLOT,
@@ -14,7 +15,7 @@ import { DECORATION_CATALOG } from '../data/decorations';
 import { CombatManager, CompanionEntry, DefeatedRiftling } from '../combat/CombatManager';
 import { computeEliteFormation } from '../combat/eliteFormation';
 import { Party, PartyRiftling, createStartingParty, createRiftling, createRiftlingAtLevel, addToParty, awardXP, getActiveSynergies, BENCH_XP_RATIO, LevelUpResult, RIFTLING_TEMPLATES, AVAILABLE_RIFTLINGS, TYPE_COLORS, speciesScale, generateStatCards, applyStatCard, getUpgradeMoveForLevel, applyMoveUpgrade } from '../data/party';
-import { getXPMultiplier, getBossTimerBonus, getEliteXPMultiplier, getLowestLevelXPBonus, TRINKET_CATALOG, TrinketDef, addTrinket, ALL_TRINKET_IDS } from '../data/trinkets';
+import { getXPMultiplier, getEliteXPMultiplier, getLowestLevelXPBonus, TRINKET_CATALOG, TrinketDef, addTrinket, ALL_TRINKET_IDS } from '../data/trinkets';
 import { SimpleNav, NavPoint, NAV_ARRIVAL_RADIUS, STUCK_WINDOW_MS, STUCK_THRESHOLD_PX } from '../data/nav';
 import { playWalkOrStatic, stopWalkAnim, directionFromVelocity } from '../data/anims';
 import { RecruitPrompt } from '../ui/RecruitPrompt';
@@ -62,7 +63,6 @@ function trinketColor(trinket: TrinketDef): number {
   if (trinket.buffs?.critRate) return 0xff8844;
   if (trinket.buffs?.evasion) return 0x9966cc;
   if (trinket.special === 'xp_bonus') return 0x4488ff;
-  if (trinket.special === 'timer_bonus') return 0xffdd44;
   return 0x888888;
 }
 
@@ -143,6 +143,7 @@ export class DungeonScene extends Phaser.Scene {
   private nav!: SimpleNav;
   private walls!: Phaser.Physics.Arcade.StaticGroup;
   private debugBodiesEnabled = false;
+  private colliderDirty = new Map<string, boolean>();
   private doorZones: { zone: Phaser.GameObjects.Zone; targetRoomId: number }[] = [];
 
   /** Tile render tracking — [y][x]. Populated in loadRoom, used by the
@@ -180,8 +181,9 @@ export class DungeonScene extends Phaser.Scene {
   // HUD elements
   private timerText!: Phaser.GameObjects.Text;
   private roomLabel!: Phaser.GameObjects.Text;
-  private timerSeconds = 600;
+  private timerSeconds = 0;
   private timerEvent!: Phaser.Time.TimerEvent;
+  private transitionFreeze = false;
 
   // Combat
   private combatManager!: CombatManager;
@@ -198,6 +200,11 @@ export class DungeonScene extends Phaser.Scene {
   private riftCoreZone: Phaser.GameObjects.Zone | null = null;
   private riftCoreLabel: Phaser.GameObjects.Text | null = null;
   private riftCoreActive = false;
+
+  // Boss door sealed label — shown when the player approaches the locked boss door
+  private bossDoorLabel: Phaser.GameObjects.Text | null = null;
+  private bossDoorCenter: { x: number; y: number } | null = null;
+  private bossDoorLabelVisible = false;
 
   // Healing spring
   private healingSpring: { zone: Phaser.GameObjects.Zone; visual: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text } | null = null;
@@ -248,6 +255,10 @@ export class DungeonScene extends Phaser.Scene {
    *  trinket selection is then opened the first time the player reaches the
    *  hub (after the two intro combats). */
   private starterTrinketPending = false;
+
+  // Starter rift shard — spawned in the hub when starterTrinketPending fires
+  private starterShard: { zone: Phaser.GameObjects.Zone; visual: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text } | null = null;
+  private starterShardUsed = false;
 
   // In-browser world builder (dev-only, dynamic import)
   private builderDrawHook: (() => void) | null = null;
@@ -532,10 +543,14 @@ export class DungeonScene extends Phaser.Scene {
     this.companions = [];
     this.healingSpring = null;
     this.riftShard = null;
+    this.starterShard = null;
     this.riftCoreSprite = null;
     this.riftCoreZone = null;
     this.riftCoreLabel = null;
     this.riftCoreActive = false;
+    this.bossDoorLabel = null;
+    this.bossDoorCenter = null;
+    this.bossDoorLabelVisible = false;
     this.recruitGathering = null;
     this.walls.clear(true, true);
     this.doorZones = [];
@@ -760,6 +775,7 @@ export class DungeonScene extends Phaser.Scene {
       // Remove existing collider
       this.walls.remove(bestEntry.body, true, true);
       bestEntry.body = null;
+      this.colliderDirty.set(bestEntry.sprite, false);
       console.log(`[F9] Removed collider: ${bestEntry.sprite} @ (${bestEntry.x}, ${bestEntry.y})`);
     } else {
       // Add a collider using catalog defaults
@@ -776,9 +792,44 @@ export class DungeonScene extends Phaser.Scene {
       body.setSize(bodyW, bodyH);
       body.refreshBody();
       bestEntry.body = body;
+      this.colliderDirty.set(bestEntry.sprite, true);
       console.log(`[F9] Added collider: ${bestEntry.sprite} @ (${bestEntry.x}, ${bestEntry.y}) — ${bodyW}×${bodyH}px`);
     }
     return true;
+  }
+
+  private saveDecorationOverrides(): void {
+    if (this.colliderDirty.size === 0) {
+      console.log('[F9] No collider changes to save.');
+      return;
+    }
+    const changed: Record<string, Record<string, unknown>> = {};
+    for (const [sprite, collides] of this.colliderDirty) {
+      const catalogDef = DECORATION_CATALOG[sprite];
+      if (!catalogDef) continue;
+      const override: Record<string, unknown> = {
+        displaySize: catalogDef.displaySize,
+        collides,
+      };
+      if (collides) {
+        override.collisionWidth = catalogDef.collisionWidth ?? Math.round(catalogDef.displaySize * 0.4);
+        override.collisionHeight = catalogDef.collisionHeight ?? Math.round(catalogDef.displaySize * 0.3);
+        if (catalogDef.collisionAnchor) override.collisionAnchor = catalogDef.collisionAnchor;
+      }
+      if (catalogDef.yOffset) override.yOffset = catalogDef.yOffset;
+      changed[sprite] = override;
+    }
+    fetch('/api/save-decoration-overrides', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changed),
+    })
+      .then(r => r.json())
+      .then(res => {
+        if (res.ok) console.log(`[F9] Saved ${Object.keys(changed).length} override(s). Total: ${res.count}`);
+        else console.error('[F9] Save failed:', res.error);
+      })
+      .catch(err => console.error('[F9] Save failed:', err));
   }
 
   /** Compute which edges (north/south/east/west) have connections. */
@@ -1392,6 +1443,24 @@ export class DungeonScene extends Phaser.Scene {
           const color = door.sealed ? 0x222222 : 0x552222;
           overlay.fillStyle(color, 0.75);
           overlay.fillRect(pos.tx * TILE, pos.ty * TILE, w, h);
+
+          if (door.locked && door.slot === BOSS_SLOT) {
+            const cx = pos.tx * TILE + w / 2;
+            const labelY = pos.ty * TILE + h + 12;
+            this.bossDoorCenter = { x: cx, y: labelY + TILE * 3 };
+            this.bossDoorLabel = this.add
+              .text(cx, labelY, '~ Sealed ~', {
+                fontFamily: 'monospace',
+                fontSize: '10px',
+                color: '#ff6666',
+                stroke: '#000000',
+                strokeThickness: 3,
+              })
+              .setOrigin(0.5)
+              .setDepth(300)
+              .setAlpha(0);
+          }
+
           continue;
         }
 
@@ -1615,6 +1684,17 @@ export class DungeonScene extends Phaser.Scene {
       D: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
     };
 
+    // Ctrl+S in F9 mode — save decoration collider changes to disk.
+    // Registered in the capture phase so it fires before Phaser's S-key
+    // handler can swallow the event.
+    window.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 's' && e.ctrlKey && this.debugBodiesEnabled) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.saveDecorationOverrides();
+      }
+    }, true);
+
     // Tab opens party screen (use DOM event — Phaser swallows Tab)
     window.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Tab') {
@@ -1762,7 +1842,7 @@ export class DungeonScene extends Phaser.Scene {
           }
         }
       } else if (tmpl.type === 'combat' || tmpl.type === 'recruit') {
-        const extraCount = Math.floor(roomsCleared * 0.8);
+        const extraCount = Math.floor(roomsCleared * 0.8 + roomsCleared * roomsCleared * 0.1);
         // Only use walkable floor tiles (value 1) so enemies don't spawn stuck in walls
         const floorTiles: { x: number; y: number }[] = [];
         for (let ry = 2; ry < tmpl.height - 2; ry++) {
@@ -1998,11 +2078,9 @@ export class DungeonScene extends Phaser.Scene {
 
   // --- Trinket selection ---
 
-  /** Library mode: paginated grid of every riftling. Pauses timer until chosen. */
+  /** Library mode: paginated grid of every riftling. */
   private showStarterLibrary(): void {
     this.starterSelectActive = true;
-    // Pause timer during selection
-    if (this.timerEvent) this.timerEvent.paused = true;
 
     const keys = AVAILABLE_RIFTLINGS;
     const perPage = 12;
@@ -2159,7 +2237,6 @@ export class DungeonScene extends Phaser.Scene {
       window.removeEventListener('keydown', onKey);
       container.destroy(true);
       this.starterSelectActive = false;
-      if (this.timerEvent) this.timerEvent.paused = false;
       this.starterLibraryTeardown = null;
     };
 
@@ -2196,7 +2273,6 @@ export class DungeonScene extends Phaser.Scene {
     // combats. tryStartCombat is a no-op in the start room (no combat there),
     // but is called for parity with the prior flow.
     this.starterTrinketPending = true;
-    if (this.timerEvent) this.timerEvent.paused = false;
     this.tryStartCombat();
   }
 
@@ -2211,7 +2287,7 @@ export class DungeonScene extends Phaser.Scene {
 
     const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
     const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
-    const spacing = 40;
+    const spacing = 56;
     const totalW = (offerings.length - 1) * spacing;
     const startX = cx - totalW / 2;
 
@@ -2346,14 +2422,79 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   private showStarterTrinketSelect(): void {
-    // Pause the timer during selection
-    if (this.timerEvent) this.timerEvent.paused = true;
-
     const choices = pickRandomTrinkets(3);
     this.showTrinketSelection(choices, (trinket) => {
       this.onTrinketPicked(trinket);
-      if (this.timerEvent) this.timerEvent.paused = false;
     }, 'Choose a Crystal', 'Select one to bring on your run');
+  }
+
+  private spawnStarterShard(): void {
+    this.starterShardUsed = false;
+    const tmpl = this.currentRoom.template;
+    const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
+    const fountainY = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
+    const cy = fountainY + 4 * TILE;
+    const radius = 18;
+
+    const gfx = this.add.graphics().setDepth(0);
+    gfx.fillStyle(0x7744cc, 0.2);
+    gfx.fillCircle(cx, cy, radius + 6);
+    gfx.fillStyle(0xaa66ff, 0.6);
+    gfx.fillTriangle(cx, cy - radius, cx - 10, cy, cx + 10, cy);
+    gfx.fillStyle(0x8844dd, 0.7);
+    gfx.fillTriangle(cx, cy + radius, cx - 10, cy, cx + 10, cy);
+    gfx.fillStyle(0xddaaff, 0.5);
+    gfx.fillCircle(cx, cy, 4);
+
+    this.tweens.add({
+      targets: gfx,
+      alpha: { from: 0.7, to: 1 },
+      duration: 1000,
+      yoyo: true,
+      repeat: -1,
+    });
+
+    const label = this.add
+      .text(cx, cy - radius - 10, 'Rift Shard', {
+        fontFamily: 'monospace',
+        fontSize: '8px',
+        color: '#bb88ff',
+        stroke: '#000000',
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5)
+      .setDepth(100);
+
+    const zone = this.add.zone(cx, cy, radius * 2.5, radius * 2.5);
+    this.physics.add.existing(zone, true);
+
+    this.starterShard = { zone, visual: gfx, label };
+  }
+
+  private checkStarterShard(): void {
+    if (!this.starterShard || this.starterShardUsed) return;
+
+    const trainerBounds = this.trainer.getBounds();
+    const zoneBounds = this.starterShard.zone.getBounds();
+
+    if (Phaser.Geom.Rectangle.Overlaps(trainerBounds, zoneBounds)) {
+      this.starterShardUsed = true;
+      this.stopAllMovement();
+
+      this.tweens.add({
+        targets: [this.starterShard.visual, this.starterShard.label],
+        alpha: 0,
+        duration: 400,
+        onComplete: () => {
+          this.starterShard?.visual.destroy();
+          this.starterShard?.label.destroy();
+          this.starterShard?.zone.destroy();
+          this.starterShard = null;
+        },
+      });
+
+      this.showStarterTrinketSelect();
+    }
   }
 
   // --- Rift Shard ---
@@ -2598,12 +2739,6 @@ export class DungeonScene extends Phaser.Scene {
   private onTrinketPicked(trinket: TrinketDef): void {
     addTrinket(this.party.trinkets, trinket);
 
-    // Apply immediate special effects
-    if (trinket.special === 'timer_bonus' && trinket.specialValue) {
-      this.timerSeconds += trinket.specialValue;
-      this.timerText?.setText(this.formatTime(this.timerSeconds));
-    }
-
     // Visual feedback
     this.cameras.main.flash(300, 80, 50, 120);
     this.showMessage(`Equipped: ${trinket.name}`, '#bb88ff');
@@ -2677,6 +2812,77 @@ export class DungeonScene extends Phaser.Scene {
     return { x: wx, y: wy };
   }
 
+  private findOpenRecruitTiles(tmpl: RoomTemplate, count: number): { tx: number; ty: number }[] {
+    const MARGIN = 2;
+    const DECOR_RADIUS = 3;
+
+    const decSet = new Set<string>();
+    if (tmpl.decorations) {
+      for (const d of tmpl.decorations) {
+        for (let dy = -DECOR_RADIUS; dy <= DECOR_RADIUS; dy++) {
+          for (let dx = -DECOR_RADIUS; dx <= DECOR_RADIUS; dx++) {
+            decSet.add(`${d.x + dx},${d.y + dy}`);
+          }
+        }
+      }
+    }
+
+    const isFloor = (tx: number, ty: number): boolean =>
+      tx >= 0 && ty >= 0 && tx < tmpl.width && ty < tmpl.height
+      && (tmpl.tiles[ty][tx] === 1 || tmpl.tiles[ty][tx] === 3);
+
+    const candidates: { tx: number; ty: number; dist: number }[] = [];
+    const centerTx = tmpl.width / 2;
+    const centerTy = tmpl.height / 2;
+
+    for (let ty = MARGIN; ty < tmpl.height - MARGIN; ty++) {
+      for (let tx = MARGIN; tx < tmpl.width - MARGIN; tx++) {
+        if (!isFloor(tx, ty)) continue;
+        if (decSet.has(`${tx},${ty}`)) continue;
+        let open = true;
+        for (let dy = -MARGIN; dy <= MARGIN && open; dy++) {
+          for (let dx = -MARGIN; dx <= MARGIN && open; dx++) {
+            if (!isFloor(tx + dx, ty + dy)) open = false;
+          }
+        }
+        if (!open) continue;
+        const dist = Math.hypot(tx - centerTx, ty - centerTy);
+        candidates.push({ tx, ty, dist });
+      }
+    }
+
+    candidates.sort((a, b) => a.dist - b.dist);
+
+    if (candidates.length === 0) {
+      const fallback: { tx: number; ty: number }[] = [];
+      const cTx = Math.floor(centerTx);
+      const cTy = Math.floor(centerTy);
+      for (let i = 0; i < count; i++) {
+        fallback.push({ tx: cTx - (count - 1) * 2 + i * 4, ty: cTy });
+      }
+      return fallback;
+    }
+
+    const MIN_TILE_DIST = 7;
+    const picks: { tx: number; ty: number }[] = [candidates[0]];
+    for (const c of candidates) {
+      if (picks.length >= count) break;
+      const tooClose = picks.some(
+        p => Math.hypot(p.tx - c.tx, p.ty - c.ty) < MIN_TILE_DIST,
+      );
+      if (!tooClose) picks.push(c);
+    }
+
+    if (picks.length < count) {
+      for (const c of candidates) {
+        if (picks.length >= count) break;
+        if (!picks.some(p => p.tx === c.tx && p.ty === c.ty)) picks.push(c);
+      }
+    }
+
+    return picks;
+  }
+
   private spawnRecruitGathering(): void {
     const room = this.currentRoom;
     const tmpl = room.template;
@@ -2696,18 +2902,16 @@ export class DungeonScene extends Phaser.Scene {
       ? (dxFromCenter > 0 ? 'east' : 'west')
       : (dyFromCenter > 0 ? 'south' : 'north');
 
-    const spacing = 40;
-    const totalLen = (offerings.length - 1) * spacing;
+    const openTiles = this.findOpenRecruitTiles(tmpl, offerings.length);
 
     const sprites: Phaser.GameObjects.Image[] = [];
     for (let i = 0; i < offerings.length; i++) {
       const key = offerings[i];
       const tmplDef = RIFTLING_TEMPLATES[key];
       if (!tmplDef) continue;
-      const offset = i * spacing - totalLen / 2;
-      const idealX = horizontalEntry ? cx : cx + offset;
-      const idealY = horizontalEntry ? cy + offset : cy;
-      const { x: px, y: py } = this.findNearbyWalkable(idealX, idealY);
+      const tile = openTiles[i % openTiles.length];
+      const px = tile.tx * TILE + TILE / 2;
+      const py = tile.ty * TILE + TILE / 2;
       const sprite = this.add
         .image(px, py, `${tmplDef.texturePrefix}_${facingDir}`)
         .setScale(speciesScale(tmplDef.texturePrefix))
@@ -2808,6 +3012,16 @@ export class DungeonScene extends Phaser.Scene {
     }
   }
 
+  private snapToIdle(): void {
+    stopWalkAnim(this.trainer, 'player', this.trainerDir);
+    for (let i = 0; i < this.companions.length; i++) {
+      const c = this.companions[i];
+      if (c.sprite.active) {
+        stopWalkAnim(c.sprite, this.party.active[i].texturePrefix, c.dir);
+      }
+    }
+  }
+
   private getRecruitTargetLevel(): number {
     const active = this.party.active;
     if (active.length === 0) return 1;
@@ -2842,23 +3056,6 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   private onTimerExpired(): void {
-    if (this.gameEnding) return;
-    this.gameEnding = true;
-    this.stopAllMovement();
-
-    const overlay = this.add
-      .rectangle(240, 160, 480, 320, 0x000000, 0)
-      .setScrollFactor(0)
-      .setDepth(700);
-    this.tweens.add({
-      targets: overlay,
-      alpha: 1,
-      duration: 1200,
-      ease: 'Power2',
-      onComplete: () => {
-        this.scene.start('GameOver', { reason: 'timeout' });
-      },
-    });
   }
 
   private launchVictory(): void {
@@ -2878,7 +3075,7 @@ export class DungeonScene extends Phaser.Scene {
       defense: r.defense,
       speed: r.speed,
     }));
-    const timeRemaining = this.timerSeconds;
+    const elapsedTime = this.timerSeconds;
 
     const overlay = this.add
       .rectangle(240, 160, 480, 320, 0x000000, 0)
@@ -2890,7 +3087,7 @@ export class DungeonScene extends Phaser.Scene {
       duration: 1200,
       ease: 'Power2',
       onComplete: () => {
-        this.scene.start('Victory', { timeRemaining, roster });
+        this.scene.start('Victory', { elapsedTime, roster });
       },
     });
   }
@@ -2930,13 +3127,7 @@ export class DungeonScene extends Phaser.Scene {
       }
     }
 
-    // Boss clear timer bonus from equipped crystals (e.g. Timer Shard)
     if (this.currentRoom.template.type === 'boss') {
-      const bossBonus = getBossTimerBonus(this.party.trinkets);
-      if (bossBonus > 0) {
-        this.timerSeconds += bossBonus;
-        this.showMessage(`+${bossBonus}s from crystal!`, '#ffdd44');
-      }
 
       // Boss defeated: activate the rift core so the player walks to it for victory.
       if (this.riftCoreSprite) {
@@ -2944,9 +3135,10 @@ export class DungeonScene extends Phaser.Scene {
       }
     }
 
-    // Distribute XP to all party members
+    // Distribute XP to all party members (skip stat-card picks for boss — game is over)
+    const isBoss = this.currentRoom.template.type === 'boss';
     const xpEarned = this.combatManager.xpEarned;
-    const levelUps = this.distributeXP(xpEarned, this.currentRoom.template.type);
+    const levelUps = isBoss ? [] : this.distributeXP(xpEarned, this.currentRoom.template.type);
 
     // Show "Room Cleared!" then level-ups, then recruit prompt
     this.roomClearedText = this.add
@@ -3133,10 +3325,11 @@ export class DungeonScene extends Phaser.Scene {
       strokeThickness: 2,
     };
 
-    const line1 = this.add.text(0, 0, 'MOVE: WASD', style);
-    const line2 = this.add.text(0, 11, 'BAG:  TAB', style);
-    const tw = Math.max(line1.width, line2.width);
-    const th = line2.y + line2.height;
+    const line1 = this.add.text(0, 0, 'MOVE:   WASD', style);
+    const line2 = this.add.text(0, 11, 'BAG:    TAB', style);
+    const line3 = this.add.text(0, 22, 'ROTATE: Q / E', style);
+    const tw = Math.max(line1.width, line2.width, line3.width);
+    const th = line3.y + line3.height;
     const pad = 3;
 
     const bg = this.add.rectangle(
@@ -3144,7 +3337,7 @@ export class DungeonScene extends Phaser.Scene {
     ).setOrigin(0, 0);
 
     const cx = x - tw - pad;
-    this.controlHintsContainer = this.add.container(cx, y, [bg, line1, line2]);
+    this.controlHintsContainer = this.add.container(cx, y, [bg, line1, line2, line3]);
     this.controlHintsContainer.setScrollFactor(0).setDepth(100);
 
     const volY = y + (th / 2);
@@ -3217,7 +3410,18 @@ export class DungeonScene extends Phaser.Scene {
    * player sees the door flash in the distance.
    */
   private announceBossUnlocked(): void {
-    this.showMessage('A door opens in the distance...', '#ffdd44');
+    const msg = this.add
+      .text(240, 40, 'A door opens in the distance...', {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#ffdd44',
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(300);
+    this.time.delayedCall(2000, () => msg.destroy());
 
     const tmpl = this.currentRoom?.template;
     if (!tmpl || tmpl.type !== 'hub' || !tmpl.hubDoorSlots) return;
@@ -3238,6 +3442,22 @@ export class DungeonScene extends Phaser.Scene {
       repeat: 2,
       yoyo: true,
       onComplete: () => pulse.destroy(),
+    });
+  }
+
+  private checkBossDoorLabel(): void {
+    if (!this.bossDoorLabel || !this.bossDoorCenter) return;
+    const dx = this.trainer.x - this.bossDoorCenter.x;
+    const dy = this.trainer.y - this.bossDoorCenter.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const shouldShow = dist < TILE * 6;
+    if (shouldShow === this.bossDoorLabelVisible) return;
+    this.bossDoorLabelVisible = shouldShow;
+    this.tweens.killTweensOf(this.bossDoorLabel);
+    this.tweens.add({
+      targets: this.bossDoorLabel,
+      alpha: shouldShow ? 1 : 0,
+      duration: 300,
     });
   }
 
@@ -3269,6 +3489,13 @@ export class DungeonScene extends Phaser.Scene {
     }
 
     const targetRoom = this.dungeon.rooms[targetRoomId];
+
+    // Resolve deferred branch rewards the first time the player enters a
+    // branch. Must happen before loadRoom so the terminal/elite templates
+    // are in place before any room in the chain is rendered.
+    if (targetRoom.branchId !== undefined) {
+      resolveBranchOnEntry(this.dungeon, targetRoom.branchId);
+    }
 
     this.currentRoom = targetRoom;
     this.dungeon.currentRoomId = targetRoomId;
@@ -3309,18 +3536,28 @@ export class DungeonScene extends Phaser.Scene {
     // Brief flash effect for transition
     this.cameras.main.flash(200, 20, 10, 40);
 
+    if (prevRoom.terminal && tmpl.type === 'hub') {
+      this.transitionFreeze = true;
+      this.trainerDir = 'south';
+      stopWalkAnim(this.trainer, 'player', 'south');
+      this.trainer.setVelocity(0, 0);
+      this.time.delayedCall(400, () => {
+        this.transitionFreeze = false;
+      });
+    }
+
     // Start combat if this is a combat room
     this.tryStartCombat();
     this.spawnHealingSpring();
     this.spawnRiftShard();
     this.spawnRecruitGathering();
 
-    // Grant the starter trinket the first time the player reaches the hub,
-    // i.e. after clearing both intro combats. The hub isn't a combat room so
-    // opening the overlay here doesn't collide with a pending encounter.
+    // Spawn the starter rift shard the first time the player reaches the hub
+    // (after clearing both intro combats). The player walks into it to pick
+    // their first crystal — much less jarring than an immediate overlay.
     if (this.starterTrinketPending && targetRoom.template.type === 'hub') {
       this.starterTrinketPending = false;
-      this.showStarterTrinketSelect();
+      this.spawnStarterShard();
     }
 
   }
@@ -3341,7 +3578,7 @@ export class DungeonScene extends Phaser.Scene {
     const cy = Math.floor(tmpl.height / 2) * TILE + TILE / 2;
 
     if (fromRoom.terminal && tmpl.type === 'hub') {
-      return { x: cx, y: cy + 2 * TILE };
+      return { x: cx, y: cy + 4 * TILE };
     }
 
     // Player is arriving from the direction of fromRoom relative to toRoom
@@ -3398,19 +3635,8 @@ export class DungeonScene extends Phaser.Scene {
       delay: 1000,
       callback: () => {
         if (this.recruitPrompt?.isActive || this.pendingRecruit || this.partyScreen?.isActive || this.riftShardSelecting) return;
-        this.timerSeconds--;
+        this.timerSeconds++;
         this.timerText.setText(this.formatTime(this.timerSeconds));
-
-        if (this.timerSeconds <= 60) {
-          this.timerText.setColor('#ff4444');
-        } else if (this.timerSeconds <= 120) {
-          this.timerText.setColor('#ffaa00');
-        }
-
-        if (this.timerSeconds <= 0) {
-          this.timerEvent.destroy();
-          this.onTimerExpired();
-        }
       },
       loop: true,
     });
@@ -3561,14 +3787,20 @@ export class DungeonScene extends Phaser.Scene {
     if (this.gameEnding) return;
 
     // Freeze gameplay during overlays
-    if (this.partyScreen?.isActive) return;
-    if (this.riftShardSelecting) return;
-    if (this.riftShardUI) return; // starter trinket selection
-    if (this.pendingRecruit || this.recruitPrompt.isActive) {
-      this.recruitPrompt.update();
+    const frozen = this.partyScreen?.isActive
+      || this.transitionFreeze
+      || this.riftShardSelecting
+      || !!this.riftShardUI
+      || this.pendingRecruit || this.recruitPrompt.isActive
+      || this.levelUpPrompt?.isActive;
+
+    if (frozen) {
+      this.snapToIdle();
+      if (this.pendingRecruit || this.recruitPrompt.isActive) {
+        this.recruitPrompt.update();
+      }
       return;
     }
-    if (this.levelUpPrompt?.isActive) return;
 
     // Freeze trainer movement during pre-combat setup
     if (this.combatManager.isActive && this.combatManager.isSetupPhase) {
@@ -3610,10 +3842,12 @@ export class DungeonScene extends Phaser.Scene {
 
     this.checkHealingSpring();
     this.checkRiftShard();
+    this.checkStarterShard();
     this.checkRiftCore();
     this.checkRecruitGathering();
     this.checkStarterGathering();
     this.checkDoorTransitions();
+    this.checkBossDoorLabel();
   }
 
   /**

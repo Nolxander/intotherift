@@ -6,7 +6,7 @@ const W = 480;
 const H = 320;
 
 export interface GameOverData {
-  reason: 'wipe' | 'timeout';
+  reason: 'wipe';
 }
 
 export class GameOverScene extends Phaser.Scene {
@@ -30,9 +30,7 @@ export class GameOverScene extends Phaser.Scene {
     }).setOrigin(0.5).setAlpha(0);
 
     // Reason text
-    const reasonMsg = reason === 'timeout'
-      ? 'The rift collapsed around you...'
-      : 'Your riftlings have fallen...';
+    const reasonMsg = 'Your riftlings have fallen...';
 
     const sub = this.add.text(W / 2, 135, reasonMsg, {
       fontFamily: 'monospace',

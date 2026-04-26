@@ -18,7 +18,7 @@ export const MAX_BAG = 4;
 
 // --- Definition ---
 
-export type TrinketSpecial = 'xp_bonus' | 'timer_bonus';
+export type TrinketSpecial = string;
 
 export interface TrinketDef {
   id: string;
@@ -33,8 +33,6 @@ export interface TrinketDef {
   specialValue?: number;
   /** Extra bag slots granted while equipped. */
   bagSlotBonus?: number;
-  /** Seconds added to the dungeon timer when a boss room is cleared. */
-  bossTimerBonus?: number;
   /** Additional XP multiplier applied to elite room clears (e.g. 0.5 = +50%). */
   eliteXPBonus?: number;
   /** Flat stat buffs applied only to allies whose role matches. */
@@ -74,30 +72,19 @@ export const TRINKET_CATALOG: Record<string, TrinketDef> = {
     flavor: 'Pulses faintly with each heartbeat',
     buffs: { hp: 20 },
   },
-  scavengers_pouch: {
-    id: 'scavengers_pouch',
-    name: 'Scavenger\'s Pouch',
-    description: '+50% XP from kills, +1 bag slot',
-    flavor: 'Always has room for one more thing',
-    special: 'xp_bonus',
-    specialValue: 0.5,
-    bagSlotBonus: 1,
+  hunters_mark: {
+    id: 'hunters_mark',
+    name: 'Hunter\'s Mark',
+    description: '+5 Crit Rate, +3 Evasion to Hunters',
+    flavor: 'Traces the path of the perfect shot',
+    roleBuffs: { hunter: { critRate: 5, evasion: 3 } },
   },
-  timer_shard: {
-    id: 'timer_shard',
-    name: 'Timer Shard',
-    description: '+30s on pickup, +15s on boss kill',
-    flavor: 'Frozen moment from a collapsed rift',
-    special: 'timer_bonus',
-    specialValue: 30,
-    bossTimerBonus: 15,
-  },
-  elder_lens: {
-    id: 'elder_lens',
-    name: 'Elder Lens',
-    description: '+50% XP from elite rooms',
-    flavor: 'Focuses the past into the present',
-    eliteXPBonus: 0.5,
+  hexers_focus: {
+    id: 'hexers_focus',
+    name: 'Hexer\'s Focus',
+    description: '+2 Attack, +10 Attack Speed to Hexers',
+    flavor: 'The curse lands before the thought finishes',
+    roleBuffs: { hexer: { attack: 2, attackSpeed: 10 } },
   },
   lucky_coin: {
     id: 'lucky_coin',
@@ -223,14 +210,6 @@ export function isTrinketInventoryFull(inv: TrinketInventory): boolean {
   return inv.equipped.length >= MAX_EQUIPPED && inv.bag.length >= getMaxBag(inv);
 }
 
-/** Total seconds a boss clear should add to the dungeon timer from equipped trinkets. */
-export function getBossTimerBonus(inv: TrinketInventory): number {
-  let sum = 0;
-  for (const t of inv.equipped) {
-    if (t.bossTimerBonus) sum += t.bossTimerBonus;
-  }
-  return sum;
-}
 
 /** XP multiplier applied ONLY to elite room clears, stacked with the base XP mult. */
 export function getEliteXPMultiplier(inv: TrinketInventory): number {

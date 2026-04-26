@@ -620,7 +620,6 @@ export class PartyScreen {
     if (trinket.buffs?.critRate) return 0xff8844;
     if (trinket.buffs?.evasion) return 0x9966cc;
     if (trinket.special === 'xp_bonus') return 0x4488ff;
-    if (trinket.special === 'timer_bonus') return 0xffdd44;
     return 0x888888;
   }
 

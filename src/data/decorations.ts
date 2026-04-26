@@ -184,6 +184,8 @@ const DEFAULT_DEF: Omit<DecorationDef, 'key' | 'path'> = {
   collides: false,
 };
 
+import savedOverrides from '../../assets/decoration-overrides.json';
+
 // Auto-discover every `assets/objects/<slug>/object.png` at dev/build time.
 // Vite resolves import.meta.glob statically — the key list reflects the
 // filesystem at build time (dev mode re-evaluates on HMR, so new files
@@ -204,7 +206,8 @@ function buildCatalog(): Record<string, DecorationDef> {
     const slug = match[1];
     const key = slug.replace(/-/g, '_');
     const relPath = `assets/objects/${slug}/object.png`;
-    const override = DECORATION_OVERRIDES[key];
+    const saved = (savedOverrides as Record<string, Omit<DecorationDef, 'key' | 'path'>>)[key];
+    const override = saved ?? DECORATION_OVERRIDES[key];
     catalog[key] = {
       key,
       path: relPath,

@@ -5,7 +5,8 @@
  *   - Slots 0-5: regular, player-choice branches (short forward-only
  *     gauntlets ending in a terminal reward room).
  *   - Slot 7:    boss branch — a single-room fight. Locked until the player
- *     has cleared BOSS_UNLOCK_THRESHOLD regular branches.
+ *     has cleared BOSS_UNLOCK_THRESHOLD regular branches (the scripted
+ *     progression guarantees this happens after the 2nd branch pick).
  *
  * Level 1 additionally prepends an intro zone (start + 2 easy combats) so
  * new players build a team before reaching the hub's choices.
@@ -31,6 +32,16 @@ import { EliteTeamMember } from './room_templates';
 
 /** What sits at the end of a branch. Drives the terminal room template pick. */
 export type BranchReward = 'elite' | 'recruit' | 'rift_shard';
+
+/**
+ * Scripted progression: the first two branches the player picks have fixed
+ * flows. Branch rewards are deferred at generation time and resolved when
+ * the player first enters a branch, based on how many branches they've
+ * already completed.
+ */
+type ScriptedBranchFlow =
+  | { order: 0; reward: 'recruit'; hasElite: false }
+  | { order: 1; reward: 'rift_shard'; hasElite: true };
 
 /** Regular branches are player-chosen; key/boss are special mandatory branches. */
 export type BranchKind = 'regular' | 'boss';
@@ -80,7 +91,11 @@ export function speciesForBiome(biome: Biome | undefined): string[] {
  * wild species pool, elite team, and recruit offerings. */
 export interface BranchArchetype {
   biome: Biome;
-  reward: BranchReward;
+  /**
+   * Terminal reward. Undefined while the branch is unresolved (deferred
+   * branches get their reward assigned when the player first enters).
+   */
+  reward?: BranchReward;
   /**
    * If true, the branch's penultimate room is an elite fight; the terminal
    * is still the reward. Rolled ~50% of regular branches. Ignored when the
@@ -98,6 +113,8 @@ export interface Branch {
   entryRoomId: number;
   terminalRoomId: number;
   cleared: boolean;
+  /** False while reward/elite assignment is deferred; set true by resolveBranchOnEntry. */
+  resolved: boolean;
 }
 
 /** A door on the hub perimeter leading to a branch. */
@@ -170,6 +187,8 @@ export interface Dungeon {
   currentBranchId: number | null;
   /** 1-indexed level. Single level; boss clear = victory. */
   level: number;
+  /** How many branches the player has entered so far (drives scripted progression). */
+  branchPickOrder: number;
 }
 
 /** Reserved slot index for the boss door on the hub's north wall. */
@@ -204,6 +223,7 @@ export function generateTestDungeon(template: RoomTemplate): Dungeon {
     entryRoomId: 0,
     terminalRoomId: 0,
     cleared: true,
+    resolved: true,
   };
   return {
     rooms: [room],
@@ -214,6 +234,7 @@ export function generateTestDungeon(template: RoomTemplate): Dungeon {
     currentRoomId: 0,
     currentBranchId: null,
     level: 1,
+    branchPickOrder: 0,
   };
 }
 
@@ -446,15 +467,20 @@ function generateBranch(
   hub: DungeonRoom,
   slot: number,
   depth: number,
+  deferred: boolean,
 ): Branch {
   const layout = HUB_SLOT_LAYOUTS[slot];
   const { entry, step } = layout;
   const roomIds: number[] = [];
 
+  // Deferred branches generate all rooms as combat (including terminal).
+  // Reward and elite placement are resolved later by resolveBranchOnEntry.
+  const resolvedReward = deferred ? undefined : archetype.reward;
+
   // Entry room (branch room 0) — connects back to the hub.
   const entryRoom = addRoom(
     ctx,
-    depth === 1 ? terminalTypeFor(archetype.reward) : 'combat',
+    depth === 1 && resolvedReward ? terminalTypeFor(resolvedReward) : 'combat',
     hub.gridX + entry.x,
     hub.gridY + entry.y,
     {
@@ -470,9 +496,9 @@ function generateBranch(
   let cx = entryRoom.gridX;
   let cy = entryRoom.gridY;
 
-  // Subsequent combat rooms. When hasElite is set, the last pre-terminal slot
-  // becomes an elite encounter instead of a regular combat room.
-  const eliteIdx = archetype.hasElite && depth >= 2 ? depth - 2 : -1;
+  // Subsequent combat rooms. When hasElite is set and not deferred, the last
+  // pre-terminal slot becomes an elite encounter.
+  const eliteIdx = !deferred && archetype.hasElite && depth >= 2 ? depth - 2 : -1;
   for (let i = 1; i < depth - 1; i++) {
     cx += step.dx;
     cy += step.dy;
@@ -489,13 +515,14 @@ function generateBranch(
     prev = r;
   }
 
-  // Terminal room with the reward (skip if depth === 1; entry is terminal).
+  // Terminal room (skip if depth === 1; entry is terminal).
   if (depth > 1) {
     cx += step.dx;
     cy += step.dy;
+    const termType: RoomType = resolvedReward ? terminalTypeFor(resolvedReward) : 'combat';
     const terminal = addRoom(
       ctx,
-      terminalTypeFor(archetype.reward),
+      termType,
       cx,
       cy,
       { biome: archetype.biome, branchId, terminal: true },
@@ -504,16 +531,15 @@ function generateBranch(
     roomIds.push(terminal.id);
   }
 
-  // Attach themed payloads to the terminal room.
-  const terminalRoom = ctx.rooms[roomIds[roomIds.length - 1]];
-  if (archetype.reward === 'elite') {
-    // Only possible when depth === 1 (single-room branch). hasElite is
-    // ignored in that case — there's no room for both fight and reward.
-    terminalRoom.eliteTeamOverride = buildBiomeEliteTeam(archetype.biome);
-  } else if (archetype.reward === 'recruit') {
-    terminalRoom.recruitOfferings = buildRecruitOfferings(archetype.biome);
-    // Recruit terminals are safe walk-in rewards — skip combat entirely.
-    terminalRoom.cleared = true;
+  // Attach themed payloads to the terminal room (skip for deferred branches).
+  if (!deferred) {
+    const terminalRoom = ctx.rooms[roomIds[roomIds.length - 1]];
+    if (archetype.reward === 'elite') {
+      terminalRoom.eliteTeamOverride = buildBiomeEliteTeam(archetype.biome);
+    } else if (archetype.reward === 'recruit') {
+      terminalRoom.recruitOfferings = buildRecruitOfferings(archetype.biome);
+      terminalRoom.cleared = true;
+    }
   }
 
   return {
@@ -524,6 +550,7 @@ function generateBranch(
     entryRoomId: entryRoom.id,
     terminalRoomId: roomIds[roomIds.length - 1],
     cleared: false,
+    resolved: !deferred,
   };
 }
 
@@ -551,7 +578,69 @@ function generateBoss(ctx: BuildCtx, branchId: number, hub: DungeonRoom): Branch
     entryRoomId: bossRoom.id,
     terminalRoomId: bossRoom.id,
     cleared: false,
+    resolved: true,
   };
+}
+
+// ---------- Runtime resolution ----------
+
+/**
+ * Resolve a deferred branch's reward and elite placement based on how many
+ * branches the player has already entered. Called once when the player first
+ * steps into a branch from the hub.
+ *
+ * Scripted flow:
+ *   Pick #1 → recruit terminal (guaranteed team-building opportunity)
+ *   Pick #2 → elite penultimate + rift_shard terminal (introduces both reward
+ *             types before the boss unlocks)
+ *   Pick #3+ → random reward, random elite chance
+ */
+export function resolveBranchOnEntry(dungeon: Dungeon, branchId: number): void {
+  const branch = dungeon.branches.find((b) => b.id === branchId);
+  if (!branch || branch.resolved) return;
+
+  branch.resolved = true;
+  const order = dungeon.branchPickOrder++;
+  const biome = branch.archetype.biome;
+  const terminalRoom = dungeon.rooms[branch.terminalRoomId];
+
+  if (order === 0) {
+    // First branch: recruit terminal — safe walk-in, no combat.
+    terminalRoom.template = { ...terminalRoom.template, type: 'recruit', enemySpawns: [] };
+    terminalRoom.recruitOfferings = buildRecruitOfferings(biome);
+    terminalRoom.cleared = true;
+    branch.archetype.reward = 'recruit';
+  } else if (order === 1) {
+    // Second branch: elite penultimate + rift_shard terminal.
+    if (branch.roomIds.length >= 2) {
+      const penultimateId = branch.roomIds[branch.roomIds.length - 2];
+      const penultimateRoom = dungeon.rooms[penultimateId];
+      penultimateRoom.template = pickTemplate('elite', biome);
+      penultimateRoom.eliteTeamOverride = buildBiomeEliteTeam(biome);
+    }
+    terminalRoom.template = pickTemplate('rift_shard', biome);
+    branch.archetype.reward = 'rift_shard';
+    branch.archetype.hasElite = true;
+  } else {
+    // 3+: random reward, random elite chance.
+    const reward = pickRandom(TERMINAL_REWARDS);
+    if (reward === 'recruit') {
+      terminalRoom.template = { ...terminalRoom.template, type: 'recruit', enemySpawns: [] };
+      terminalRoom.recruitOfferings = buildRecruitOfferings(biome);
+      terminalRoom.cleared = true;
+    } else {
+      terminalRoom.template = pickTemplate(terminalTypeFor(reward), biome);
+    }
+    branch.archetype.reward = reward;
+
+    if (Math.random() < ELITE_CHANCE && branch.roomIds.length >= 2) {
+      const penultimateId = branch.roomIds[branch.roomIds.length - 2];
+      const penultimateRoom = dungeon.rooms[penultimateId];
+      penultimateRoom.template = pickTemplate('elite', biome);
+      penultimateRoom.eliteTeamOverride = buildBiomeEliteTeam(biome);
+      branch.archetype.hasElite = true;
+    }
+  }
 }
 
 // ---------- Generator ----------
@@ -619,9 +708,10 @@ function generateIntroZone(ctx: BuildCtx, hub: DungeonRoom): DungeonRoom {
 /**
  * Generate a hub-and-spoke dungeon.
  *
- * A central hub room hosts regular branch doors (5 for L1, 6 otherwise),
- * plus a boss door on the hub's north wall. Each regular branch is a short
- * forward-only chain ending in a terminal reward. Level 1 additionally
+ * A central hub room hosts regular branch doors, plus a boss door on the
+ * hub's north wall. Branch rewards are deferred: all rooms generate as
+ * combat, and resolveBranchOnEntry assigns rewards based on pick order
+ * (1st = recruit, 2nd = elite + rift_shard, 3rd+ = random). Level 1
  * prepends an intro zone (start + 2 easy combats) so new players build a
  * team before reaching the hub's choices.
  *
@@ -650,15 +740,11 @@ export function generateDungeon(
   const ctx: BuildCtx = { rooms: [], nextId: 0 };
   const hub = addRoom(ctx, 'hub', 0, 0);
 
-  // Pick distinct biomes for each branch; rewards cycle and shuffle so the
-  // branch types feel varied across runs. Biome drives tileset, wild species
-  // pool, and terminal (elite / recruit) offerings.
+  // Pick distinct biomes for each branch. Rewards and elite placement are
+  // deferred — resolved at runtime when the player first enters a branch
+  // (see resolveBranchOnEntry). This enables scripted progression where
+  // the first two player-chosen branches have fixed flows.
   const biomes = shuffle([...BRANCH_BIOMES]).slice(0, branchCount);
-  const rewards: BranchReward[] = [];
-  for (let i = 0; i < branchCount; i++) {
-    rewards.push(TERMINAL_REWARDS[i % TERMINAL_REWARDS.length]);
-  }
-  shuffle(rewards);
 
   // Depth scales mildly with level: L1 = 3 rooms, L2+ = 4 rooms per branch.
   const depth = level >= 2 ? 4 : 3;
@@ -666,13 +752,9 @@ export function generateDungeon(
   const branches: Branch[] = [];
   const doors: HubDoor[] = [];
   for (let i = 0; i < branchCount; i++) {
-    const archetype: BranchArchetype = {
-      biome: biomes[i],
-      reward: rewards[i],
-      hasElite: Math.random() < ELITE_CHANCE,
-    };
+    const archetype: BranchArchetype = { biome: biomes[i] };
     const slot = slotPool[i];
-    const branch = generateBranch(ctx, i, archetype, hub, slot, depth);
+    const branch = generateBranch(ctx, i, archetype, hub, slot, depth, true);
     branches.push(branch);
     doors.push({ branchId: branch.id, slot, sealed: false, locked: false });
   }
@@ -699,5 +781,6 @@ export function generateDungeon(
     currentRoomId: spawnRoom.id,
     currentBranchId: null,
     level,
+    branchPickOrder: 0,
   };
 }

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { PartyRiftling, Move, MoveKind, Role, Stance, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, getActiveRoleSynergies, TYPE_COLORS, speciesScale, FormationOffset } from '../data/party';
+import { PartyRiftling, Move, MoveKind, Role, Stance, AVAILABLE_RIFTLINGS, MAX_LEVEL, createRiftlingAtLevel, BASE_KILL_XP, getActiveSynergies, getActiveRoleSynergies, getSynergyTier, TYPE_COLORS, speciesScale, FormationOffset } from '../data/party';
 import { EliteTeamMember } from '../data/room_templates';
 import { TrinketInventory, getEquippedBuffs, getRoleBuffs } from '../data/trinkets';
 import {
@@ -29,11 +29,11 @@ const SEPARATION_FORCE = 60;
 const WILD_HP_MULT = 0.95;
 const WILD_ATK_MULT = 0.3;
 const WILD_SPEED_MULT = 0.7;
-const ELITE_HP_MULT = 0.70;
-const ELITE_ATK_MULT = 0.75;
+const ELITE_HP_MULT = 0.80;
+const ELITE_ATK_MULT = 0.85;
 
-const BOSS_HP_MULT = 1.1;
-const BOSS_ATK_MULT = 0.55;
+const BOSS_HP_MULT = 1.3;
+const BOSS_ATK_MULT = 0.65;
 
 /** Multiplier to convert move.cooldown value to milliseconds. */
 const MOVE_CD_SCALE = 200;
@@ -316,6 +316,7 @@ export class CombatManager {
   /** Last sampled position for stuck-detection. */
   private unitLastPos = new Map<CombatUnit, NavPoint>();
   private unitLastPosTime = new Map<CombatUnit, number>();
+  private unitStuckCount = new Map<CombatUnit, number>();
 
   // --- Boss encounter state ---
   private bossUnit: CombatUnit | null = null;
@@ -397,6 +398,7 @@ export class CombatManager {
     this.unitNavGoal.clear();
     this.unitLastPos.clear();
     this.unitLastPosTime.clear();
+    this.unitStuckCount.clear();
     this.unitLastDir.clear();
 
     // Enter setup phase — allies walk to formation, enemies idle
@@ -450,31 +452,35 @@ export class CombatManager {
       });
     }
 
-    // Apply type synergy buffs to matching allies
+    // Apply type synergy buffs to matching allies (tiered by count)
     const synergies = getActiveSynergies(companions.map((c) => c.data));
-    for (const { synergy } of synergies) {
+    for (const { synergy, count } of synergies) {
+      const tierIdx = getSynergyTier(count);
+      if (tierIdx < 0) continue;
+      const tier = synergy.tiers[tierIdx];
       for (const ally of this.allies) {
         if (ally.elementType !== synergy.type) continue;
-        if (synergy.buffs.attack) ally.attack += synergy.buffs.attack;
-        if (synergy.buffs.defense) ally.defense += synergy.buffs.defense;
-        if (synergy.buffs.critRate) ally.critRate += synergy.buffs.critRate;
-        if (synergy.buffs.evasion) ally.evasion += synergy.buffs.evasion;
-        if (synergy.buffs.hp) {
-          ally.maxHp += synergy.buffs.hp;
-          ally.hp += synergy.buffs.hp;
+        if (tier.buffs.attack) ally.attack += tier.buffs.attack;
+        if (tier.buffs.defense) ally.defense += tier.buffs.defense;
+        if (tier.buffs.critRate) ally.critRate += tier.buffs.critRate;
+        if (tier.buffs.evasion) ally.evasion += tier.buffs.evasion;
+        if (tier.buffs.hp) {
+          ally.maxHp += tier.buffs.hp;
+          ally.hp += tier.buffs.hp;
         }
       }
 
-      // Nature regen: heal matching allies 2 HP/s during combat
-      if (synergy.special === 'regen') {
+      const regenSpecial = tier.special;
+      if (regenSpecial?.startsWith('regen')) {
+        const hpPerSec = regenSpecial === 'regen3' ? 3 : regenSpecial === 'regen2' ? 2 : 1;
         this.regenTimer = this.scene.time.addEvent({
           delay: 1000,
           loop: true,
           callback: () => {
             if (!this.active) return;
             for (const ally of this.allies) {
-              if (ally.alive && ally.elementType === 'nature') {
-                ally.hp = Math.min(ally.maxHp, ally.hp + 2);
+              if (ally.alive && ally.elementType === synergy.type) {
+                ally.hp = Math.min(ally.maxHp, ally.hp + hpPerSec);
               }
             }
           },
@@ -482,27 +488,34 @@ export class CombatManager {
       }
     }
 
-    // Apply role (class) synergy buffs to matching allies
+    // Apply role (class) synergy buffs to matching allies (tiered by count)
     const roleSynergies = getActiveRoleSynergies(companions.map((c) => c.data));
-    for (const { synergy } of roleSynergies) {
+    for (const { synergy, count } of roleSynergies) {
+      const tierIdx = getSynergyTier(count);
+      if (tierIdx < 0) continue;
+      const tier = synergy.tiers[tierIdx];
       for (const ally of this.allies) {
         if (ally.role !== synergy.role) continue;
-        if (synergy.buffs.attack) ally.attack += synergy.buffs.attack;
-        if (synergy.buffs.defense) ally.defense += synergy.buffs.defense;
-        if (synergy.buffs.critRate) ally.critRate += synergy.buffs.critRate;
-        if (synergy.buffs.evasion) ally.evasion += synergy.buffs.evasion;
-        if (synergy.buffs.speed) ally.speed += synergy.buffs.speed;
-        if (synergy.buffs.hp) {
-          ally.maxHp += synergy.buffs.hp;
-          ally.hp += synergy.buffs.hp;
+        if (tier.buffs.attack) ally.attack += tier.buffs.attack;
+        if (tier.buffs.defense) ally.defense += tier.buffs.defense;
+        if (tier.buffs.critRate) ally.critRate += tier.buffs.critRate;
+        if (tier.buffs.evasion) ally.evasion += tier.buffs.evasion;
+        if (tier.buffs.speed) ally.speed += tier.buffs.speed;
+        if (tier.buffs.hp) {
+          ally.maxHp += tier.buffs.hp;
+          ally.hp += tier.buffs.hp;
         }
-        if (synergy.attackSpeedMult) {
-          ally.attackCooldown = Math.max(400, Math.round(ally.attackCooldown * synergy.attackSpeedMult));
+        if (tier.buffs.attackSpeed) {
+          ally.attackCooldown = Math.max(400, ally.attackCooldown - tier.buffs.attackSpeed);
+        }
+        if (tier.attackSpeedMult) {
+          ally.attackCooldown = Math.max(400, Math.round(ally.attackCooldown * tier.attackSpeedMult));
         }
       }
 
-      // Support regen: heal matching allies 1 HP/s during combat
-      if (synergy.special === 'regen') {
+      const regenSpecial = tier.special;
+      if (regenSpecial?.startsWith('regen')) {
+        const hpPerSec = regenSpecial === 'regen2' ? 2 : 1;
         this.roleRegenTimer = this.scene.time.addEvent({
           delay: 1000,
           loop: true,
@@ -510,7 +523,7 @@ export class CombatManager {
             if (!this.active) return;
             for (const ally of this.allies) {
               if (ally.alive && ally.role === synergy.role) {
-                ally.hp = Math.min(ally.maxHp, ally.hp + 1);
+                ally.hp = Math.min(ally.maxHp, ally.hp + hpPerSec);
               }
             }
           },
@@ -586,7 +599,7 @@ export class CombatManager {
     const partyFloor = Math.floor(avgPartyLevel);
     const enemyLevel = Math.max(
       1,
-      Math.min(MAX_LEVEL, partyFloor + 2, Math.max(Math.round(difficulty), partyFloor)),
+      Math.min(MAX_LEVEL, partyFloor + 3, Math.max(Math.round(difficulty), partyFloor)),
     );
 
     // Elite encounters march from the trainer out to role-based formation
@@ -1054,6 +1067,20 @@ export class CombatManager {
       isStuck = (ddx * ddx + ddy * ddy) < STUCK_THRESHOLD_PX * STUCK_THRESHOLD_PX && dist > 16;
       this.unitLastPos.set(unit, { x: unit.sprite.x, y: unit.sprite.y });
       this.unitLastPosTime.set(unit, time);
+    }
+
+    if (isStuck) {
+      const count = (this.unitStuckCount.get(unit) ?? 0) + 1;
+      this.unitStuckCount.set(unit, count);
+      // Teleport to nearest walkable tile if stuck for consecutive checks
+      if (count >= 2) {
+        const clear = this.nav.snapToWalkable(unit.sprite.x, unit.sprite.y);
+        unit.sprite.setPosition(clear.x, clear.y);
+        (unit.sprite.body as Phaser.Physics.Arcade.Body).reset(clear.x, clear.y);
+        this.unitStuckCount.set(unit, 0);
+      }
+    } else {
+      this.unitStuckCount.set(unit, 0);
     }
 
     // --- Path recalculation ---
@@ -3400,20 +3427,22 @@ export class CombatManager {
       const totalWidth = (count - 1) * spacing;
       const startX = baseX - totalWidth / 2;
       for (let i = 0; i < count; i++) {
-        targets.push({
+        const raw = {
           x: Math.max(margin, Math.min(roomW - margin, startX + i * spacing)),
           y: baseY,
-        });
+        };
+        targets.push(this.nav ? this.nav.snapToWalkable(raw.x, raw.y) : raw);
       }
     } else {
       // Spread allies vertically
       const totalHeight = (count - 1) * spacing;
       const startY = baseY - totalHeight / 2;
       for (let i = 0; i < count; i++) {
-        targets.push({
+        const raw = {
           x: baseX,
           y: Math.max(margin, Math.min(roomH - margin, startY + i * spacing)),
-        });
+        };
+        targets.push(this.nav ? this.nav.snapToWalkable(raw.x, raw.y) : raw);
       }
     }
     return targets;
