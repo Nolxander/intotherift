@@ -2037,6 +2037,7 @@ export class DungeonScene extends Phaser.Scene {
     const room = this.currentRoom;
     if (!room.terminal) return;
     if (!room.cleared) return;
+    if (room.template.type === 'boss') return;
 
     const tmpl = room.template;
     const cx = Math.floor(tmpl.width / 2) * TILE + TILE / 2;
@@ -2842,6 +2843,9 @@ export class DungeonScene extends Phaser.Scene {
         duration: 800,
       });
     }
+
+    this.currentRoom.cleared = true;
+    this.spawnTeleportPad();
   }
 
   // --- Recruit Gathering (themed recruit terminal reward) ---
